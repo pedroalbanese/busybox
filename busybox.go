@@ -1,10 +1,10 @@
-// busybox.go — BusyBox completo em Go puro
+// busybox.go — Complete BusyBox in pure Go
 //
-// Compilar:
+// Build:
 //   go build -ldflags="-s -w" -o busybox busybox.go
 //   GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o busybox.exe busybox.go
 //
-// Uso:
+// Usage:
 //   busybox <applet> [args...]
 //   busybox --list
 //   ln -s busybox ls && ./ls -la
@@ -40,42 +40,42 @@ import (
 )
 
 // ===========================================================================
-// Registro de applets
+// Applet registry
 // ===========================================================================
 
 type appletFunc func(args []string) int
 
-// Mapa declarado vazio; preenchido em init() para quebrar o ciclo
+// Map declared empty; filled in init() to break the cycle
 // applets -> appletSh -> runScript -> runPipeline -> runCommandWithRedir -> applets.
 var applets = map[string]appletFunc{}
 
 func init() {
 	applets = map[string]appletFunc{
-		// arquivos
+		// files
 		"ls": appletLs, "cp": appletCp, "mv": appletMv, "rm": appletRm,
 		"mkdir": appletMkdir, "rmdir": appletRmdir, "touch": appletTouch,
 		"find": appletFind, "du": appletDu, "df": appletDf, "dd": appletDd,
 		"tar": appletTar, "gzip": appletGzip, "stat": appletStat,
 		"chmod": appletChmod, "chown": appletChown, "ln": appletLn,
 		"readlink": appletReadlink, "split": appletSplit, "hexedit": appletHexedit,
-		// texto
+		// text
 		"cat": appletCat, "head": appletHead, "tail": appletTail, "wc": appletWc,
 		"grep": appletGrep, "sort": appletSort, "uniq": appletUniq, "tr": appletTr,
 		"cut": appletCut, "tee": appletTee, "sed": appletSed, "awk": appletAwk,
 		"diff": appletDiff, "patch": appletPatch, "strings": appletStrings,
-		// sistema
+		// system
 		"pwd": appletPwd, "env": appletEnv, "sleep": appletSleep, "uname": appletUname,
 		"whoami": appletWhoami, "hostname": appletHostname, "date": appletDate,
 		"id": appletId, "which": appletWhich, "top": appletTop,
-		// cálculo
+		// arithmetic
 		"expr": appletExpr, "bc": appletBc,
-		// hash / codificação
+		// hash / encoding
 		"sha256sum": appletSha256sum, "md5sum": appletMd5sum, "sha1sum": appletSha1sum,
 		"cksum": appletCksum, "base64": appletBase64, "hexdump": appletHexdump,
-		// rede
+		// network
 		"wget": appletWget, "ping": appletPing, "netstat": appletNetstat,
 		"nc": appletNc, "ifconfig": appletIfconfig, "route": appletRoute,
-		// utilitários
+		// utilities
 		"echo": appletEcho, "printf": appletPrintf, "true": appletTrue,
 		"false": appletFalse, "yes": appletYes, "basename": appletBasename,
 		"dirname": appletDirname, "seq": appletSeq, "xargs": appletXargs,
@@ -101,7 +101,7 @@ func main() {
 		}
 		fn, ok := applets[name]
 		if !ok {
-			fmt.Fprintf(os.Stderr, "busybox: applet desconhecido: %s\n", name)
+			fmt.Fprintf(os.Stderr, "busybox: unknown applet: %s\n", name)
 			os.Exit(127)
 		}
 		os.Exit(fn(os.Args[2:]))
@@ -109,13 +109,13 @@ func main() {
 	if fn, ok := applets[prog]; ok {
 		os.Exit(fn(os.Args[1:]))
 	}
-	fmt.Fprintf(os.Stderr, "busybox: nome de invocação desconhecido: %s\n", prog)
+	fmt.Fprintf(os.Stderr, "busybox: unknown invocation name: %s\n", prog)
 	os.Exit(127)
 }
 
 func printUsage() {
-	fmt.Fprintln(os.Stderr, "Uso: busybox <applet> [args...]")
-	fmt.Fprintln(os.Stderr, "     busybox --list | --help")
+	fmt.Fprintln(os.Stderr, "Usage: busybox <applet> [args...]")
+	fmt.Fprintln(os.Stderr, "       busybox --list | --help")
 }
 
 func listApplets() {
@@ -185,7 +185,7 @@ func humanSize(n int64) string {
 }
 
 // ===========================================================================
-// Applets: arquivos
+// Applets: files
 // ===========================================================================
 
 func appletLs(args []string) int {
@@ -201,7 +201,7 @@ func appletLs(args []string) int {
 			long, all = true, true
 		default:
 			if strings.HasPrefix(a, "-") && len(a) > 1 {
-				return fail("ls: opção inválida: %s", a)
+				return fail("ls: invalid option: %s", a)
 			}
 			paths = append(paths, a)
 		}
@@ -266,7 +266,7 @@ func printEntry(path string, info os.FileInfo, long bool) {
 
 func appletCp(args []string) int {
 	if len(args) < 2 {
-		return fail("cp: uso: cp origem destino")
+		return fail("cp: usage: cp source destination")
 	}
 	src, dst := args[0], args[1]
 	in, err := os.Open(src)
@@ -289,7 +289,7 @@ func appletCp(args []string) int {
 
 func appletMv(args []string) int {
 	if len(args) < 2 {
-		return fail("mv: uso: mv origem destino")
+		return fail("mv: usage: mv source destination")
 	}
 	if err := os.Rename(args[0], args[1]); err != nil {
 		if rc := appletCp(args); rc != 0 {
@@ -315,7 +315,7 @@ func appletRm(args []string) int {
 			recursive, force = true, true
 		default:
 			if strings.HasPrefix(a, "-") && len(a) > 1 {
-				return fail("rm: opção inválida: %s", a)
+				return fail("rm: invalid option: %s", a)
 			}
 			paths = append(paths, a)
 		}
@@ -324,7 +324,7 @@ func appletRm(args []string) int {
 		if force {
 			return 0
 		}
-		return fail("rm: uso: rm [-r] [-f] arquivos...")
+		return fail("rm: usage: rm [-r] [-f] files...")
 	}
 	rc := 0
 	for _, p := range paths {
@@ -353,7 +353,7 @@ func appletMkdir(args []string) int {
 		dirs = append(dirs, a)
 	}
 	if len(dirs) == 0 {
-		return fail("mkdir: uso: mkdir [-p] dirs...")
+		return fail("mkdir: usage: mkdir [-p] dirs...")
 	}
 	rc := 0
 	for _, d := range dirs {
@@ -373,7 +373,7 @@ func appletMkdir(args []string) int {
 
 func appletRmdir(args []string) int {
 	if len(args) == 0 {
-		return fail("rmdir: uso: rmdir dirs...")
+		return fail("rmdir: usage: rmdir dirs...")
 	}
 	rc := 0
 	for _, d := range args {
@@ -387,7 +387,7 @@ func appletRmdir(args []string) int {
 
 func appletTouch(args []string) int {
 	if len(args) == 0 {
-		return fail("touch: uso: touch arquivos...")
+		return fail("touch: usage: touch files...")
 	}
 	rc := 0
 	now := time.Now()
@@ -483,7 +483,7 @@ func dirSize(path string) (int64, error) {
 func appletDf(args []string) int {
 	wd, _ := os.Getwd()
 	fmt.Println("Filesystem     1K-blocks  Used  Available  Use%  Mounted on")
-	fmt.Printf("(desconhecido)         0     0          0     -  %s\n", wd)
+	fmt.Printf("(unknown)              0     0          0     -  %s\n", wd)
 	return 0
 }
 
@@ -507,13 +507,13 @@ func appletDd(args []string) int {
 		case "bs":
 			n, err := parseSize(v)
 			if err != nil {
-				return fail("dd: bs inválido: %s", v)
+				return fail("dd: invalid bs: %s", v)
 			}
 			bs = n
 		case "count":
 			n, err := strconv.Atoi(v)
 			if err != nil {
-				return fail("dd: count inválido: %s", v)
+				return fail("dd: invalid count: %s", v)
 			}
 			count = n
 		case "skip":
@@ -571,7 +571,7 @@ func appletDd(args []string) int {
 			break
 		}
 	}
-	fmt.Fprintf(os.Stderr, "%d bytes copiados\n", total)
+	fmt.Fprintf(os.Stderr, "%d bytes copied\n", total)
 	return 0
 }
 
@@ -596,7 +596,7 @@ func parseSize(s string) (int, error) {
 
 func appletTar(args []string) int {
 	if len(args) == 0 {
-		return fail("tar: uso: tar -c|-x|-t [-z] -f arquivo [arquivos...]")
+		return fail("tar: usage: tar -c|-x|-t [-z] -f file [files...]")
 	}
 	create, extract, list, gz := false, false, false, false
 	var archive string
@@ -615,7 +615,7 @@ func appletTar(args []string) int {
 			gz, i = true, i+1
 		case a == "-f":
 			if i+1 >= len(args) {
-				return fail("tar: -f requer um argumento")
+				return fail("tar: -f requires an argument")
 			}
 			archive, i = args[i+1], i+2
 		case strings.HasPrefix(a, "-") && len(a) > 1:
@@ -637,7 +637,7 @@ func appletTar(args []string) int {
 		}
 	}
 	if archive == "" {
-		return fail("tar: -f arquivo obrigatório")
+		return fail("tar: -f file required")
 	}
 	switch {
 	case create:
@@ -647,7 +647,7 @@ func appletTar(args []string) int {
 	case list:
 		return tarList(archive, gz)
 	}
-	return fail("tar: especifique -c, -x ou -t")
+	return fail("tar: specify -c, -x or -t")
 }
 
 func tarCreate(archive string, files []string, gz bool) int {
@@ -856,7 +856,7 @@ func gzipDecompress(name string, toStdout, keep bool) int {
 
 func appletStat(args []string) int {
 	if len(args) == 0 {
-		return fail("stat: uso: stat arquivos...")
+		return fail("stat: usage: stat files...")
 	}
 	rc := 0
 	for _, p := range args {
@@ -877,11 +877,11 @@ func appletStat(args []string) int {
 
 func appletChmod(args []string) int {
 	if len(args) < 2 {
-		return fail("chmod: uso: chmod modo arquivos...")
+		return fail("chmod: usage: chmod mode files...")
 	}
 	mode, err := strconv.ParseUint(args[0], 8, 32)
 	if err != nil {
-		return fail("chmod: modo inválido: %s", args[0])
+		return fail("chmod: invalid mode: %s", args[0])
 	}
 	rc := 0
 	for _, p := range args[1:] {
@@ -895,9 +895,9 @@ func appletChmod(args []string) int {
 
 func appletChown(args []string) int {
 	if len(args) < 2 {
-		return fail("chown: uso: chown usuário arquivos...")
+		return fail("chown: usage: chown user files...")
 	}
-	fmt.Fprintln(os.Stderr, "chown: operação não suportada de forma portátil em Go puro")
+	fmt.Fprintln(os.Stderr, "chown: operation not supported portably in pure Go")
 	return 1
 }
 
@@ -912,7 +912,7 @@ func appletLn(args []string) int {
 		rest = append(rest, a)
 	}
 	if len(rest) < 2 {
-		return fail("ln: uso: ln [-s] alvo link")
+		return fail("ln: usage: ln [-s] target link")
 	}
 	target, link := rest[0], rest[1]
 	var err error
@@ -929,7 +929,7 @@ func appletLn(args []string) int {
 
 func appletReadlink(args []string) int {
 	if len(args) < 1 {
-		return fail("readlink: uso: readlink link")
+		return fail("readlink: usage: readlink link")
 	}
 	target, err := os.Readlink(args[0])
 	if err != nil {
@@ -948,11 +948,11 @@ func appletSplit(args []string) int {
 		switch args[i] {
 		case "-l":
 			if i+1 >= len(args) {
-				return fail("split: -l requer um argumento")
+				return fail("split: -l requires an argument")
 			}
 			n, err := strconv.Atoi(args[i+1])
 			if err != nil {
-				return fail("split: valor inválido: %s", args[i+1])
+				return fail("split: invalid value: %s", args[i+1])
 			}
 			linesPerFile, i = n, i+2
 		default:
@@ -1001,7 +1001,7 @@ func appletSplit(args []string) int {
 
 func appletHexedit(args []string) int {
 	if len(args) < 1 {
-		return fail("hexedit: uso: hexedit arquivo")
+		return fail("hexedit: usage: hexedit file")
 	}
 	f, err := os.OpenFile(args[0], os.O_RDWR, 0o644)
 	if err != nil {
@@ -1042,7 +1042,7 @@ func appletHexedit(args []string) int {
 }
 
 // ===========================================================================
-// Applets: texto
+// Applets: text
 // ===========================================================================
 
 func appletCat(args []string) int {
@@ -1070,7 +1070,7 @@ func appletHead(args []string) int {
 		if args[i] == "-n" && i+1 < len(args) {
 			v, err := strconv.Atoi(args[i+1])
 			if err != nil {
-				return fail("head: valor inválido: %s", args[i+1])
+				return fail("head: invalid value: %s", args[i+1])
 			}
 			n, i = v, i+2
 			continue
@@ -1108,7 +1108,7 @@ func appletTail(args []string) int {
 		if args[i] == "-n" && i+1 < len(args) {
 			v, err := strconv.Atoi(args[i+1])
 			if err != nil {
-				return fail("tail: valor inválido: %s", args[i+1])
+				return fail("tail: invalid value: %s", args[i+1])
 			}
 			n, i = v, i+2
 			continue
@@ -1210,7 +1210,7 @@ func appletGrep(args []string) int {
 				case 'n':
 					showNum = true
 				default:
-					return fail("grep: opção inválida: -%c", c)
+					return fail("grep: invalid option: -%c", c)
 				}
 			}
 			continue
@@ -1218,7 +1218,7 @@ func appletGrep(args []string) int {
 		rest = append(rest, a)
 	}
 	if len(rest) == 0 {
-		return fail("grep: uso: grep [-i] [-v] [-n] padrão [arquivos...]")
+		return fail("grep: usage: grep [-i] [-v] [-n] pattern [files...]")
 	}
 	pattern := rest[0]
 	files := rest[1:]
@@ -1319,11 +1319,11 @@ func appletUniq(args []string) int {
 
 func appletTr(args []string) int {
 	if len(args) < 2 {
-		return fail("tr: uso: tr conjunto1 conjunto2")
+		return fail("tr: usage: tr set1 set2")
 	}
 	set1, set2 := args[0], args[1]
 	if len(set1) != len(set2) {
-		return fail("tr: conjuntos devem ter o mesmo tamanho")
+		return fail("tr: sets must have the same length")
 	}
 	data, _ := io.ReadAll(os.Stdin)
 	out := make([]byte, len(data))
@@ -1348,17 +1348,17 @@ func appletCut(args []string) int {
 		switch args[i] {
 		case "-d":
 			if i+1 >= len(args) {
-				return fail("cut: -d requer um argumento")
+				return fail("cut: -d requires an argument")
 			}
 			delim, i = args[i+1], i+2
 		case "-f":
 			if i+1 >= len(args) {
-				return fail("cut: -f requer um argumento")
+				return fail("cut: -f requires an argument")
 			}
 			for _, s := range strings.Split(args[i+1], ",") {
 				n, err := strconv.Atoi(s)
 				if err != nil || n < 1 {
-					return fail("cut: campo inválido: %s", s)
+					return fail("cut: invalid field: %s", s)
 				}
 				fields = append(fields, n)
 			}
@@ -1368,7 +1368,7 @@ func appletCut(args []string) int {
 		}
 	}
 	if len(fields) == 0 {
-		return fail("cut: uso: cut -d delim -f campos [arquivos...]")
+		return fail("cut: usage: cut -d delim -f fields [files...]")
 	}
 	if len(files) == 0 {
 		files = []string{"-"}
@@ -1435,7 +1435,7 @@ func appletTee(args []string) int {
 
 func appletSed(args []string) int {
 	if len(args) == 0 {
-		return fail("sed: uso: sed [-n] [-e script]... [script] [arquivos...]")
+		return fail("sed: usage: sed [-n] [-e script]... [script] [files...]")
 	}
 	noPrint := false
 	var scripts []string
@@ -1448,11 +1448,11 @@ func appletSed(args []string) int {
 			noPrint, i = true, i+1
 		case a == "-e":
 			if i+1 >= len(args) {
-				return fail("sed: -e requer um argumento")
+				return fail("sed: -e requires an argument")
 			}
 			scripts, i = append(scripts, args[i+1]), i+2
 		case strings.HasPrefix(a, "-"):
-			return fail("sed: opção inválida: %s", a)
+			return fail("sed: invalid option: %s", a)
 		default:
 			if len(scripts) == 0 {
 				scripts, i = append(scripts, a), i+1
@@ -1462,7 +1462,7 @@ func appletSed(args []string) int {
 		}
 	}
 	if len(scripts) == 0 {
-		return fail("sed: script ausente")
+		return fail("sed: missing script")
 	}
 	if len(files) == 0 {
 		files = []string{"-"}
@@ -1560,7 +1560,7 @@ func parseSedCmd(s string) (sedCmd, error) {
 	if strings.HasPrefix(s, "/") {
 		end := strings.Index(s[1:], "/")
 		if end < 0 {
-			return c, fmt.Errorf("endereço regex não fechado")
+			return c, fmt.Errorf("unterminated regex address")
 		}
 		re, err := regexp.Compile(s[1 : 1+end])
 		if err != nil {
@@ -1585,7 +1585,7 @@ func parseSedCmd(s string) (sedCmd, error) {
 	}
 	s = strings.TrimSpace(s)
 	if s == "" {
-		return c, fmt.Errorf("comando sed vazio")
+		return c, fmt.Errorf("empty sed command")
 	}
 	c.op = s[0]
 	switch c.op {
@@ -1594,7 +1594,7 @@ func parseSedCmd(s string) (sedCmd, error) {
 		delim := s[1]
 		parts := strings.SplitN(s[2:], string(delim), 3)
 		if len(parts) < 2 {
-			return c, fmt.Errorf("substituição s inválida")
+			return c, fmt.Errorf("invalid s substitution")
 		}
 		re, err := regexp.Compile(parts[0])
 		if err != nil {
@@ -1606,7 +1606,7 @@ func parseSedCmd(s string) (sedCmd, error) {
 			c.global = true
 		}
 	default:
-		return c, fmt.Errorf("comando sed não suportado: %c", c.op)
+		return c, fmt.Errorf("unsupported sed command: %c", c.op)
 	}
 	return c, nil
 }
@@ -1620,7 +1620,7 @@ func appletAwk(args []string) int {
 		switch {
 		case args[i] == "-F":
 			if i+1 >= len(args) {
-				return fail("awk: -F requer um argumento")
+				return fail("awk: -F requires an argument")
 			}
 			fs, i = args[i+1], i+2
 		case strings.HasPrefix(args[i], "-F"):
@@ -1632,7 +1632,7 @@ func appletAwk(args []string) int {
 		}
 	}
 	if prog == "" {
-		return fail("awk: uso: awk [-F sep] 'programa' [arquivos...]")
+		return fail("awk: usage: awk [-F sep] 'program' [files...]")
 	}
 	if len(files) == 0 {
 		files = []string{"-"}
@@ -1753,7 +1753,7 @@ func execAwkAction(action string, ctx map[string]string, fields []string, line s
 
 func appletDiff(args []string) int {
 	if len(args) < 2 {
-		return fail("diff: uso: diff arquivo1 arquivo2")
+		return fail("diff: usage: diff file1 file2")
 	}
 	a, err := readLines(args[0])
 	if err != nil {
@@ -1849,7 +1849,7 @@ func appletPatch(args []string) int {
 		rest, i = append(rest, args[i]), i+1
 	}
 	if len(rest) < 2 {
-		return fail("patch: uso: patch [-o saida] arquivo patchfile")
+		return fail("patch: usage: patch [-o output] file patchfile")
 	}
 	target, patchFile := rest[0], rest[1]
 	orig, err := readLines(target)
@@ -1908,7 +1908,7 @@ func appletStrings(args []string) int {
 		if args[i] == "-n" && i+1 < len(args) {
 			n, err := strconv.Atoi(args[i+1])
 			if err != nil {
-				return fail("strings: valor inválido: %s", args[i+1])
+				return fail("strings: invalid value: %s", args[i+1])
 			}
 			minLen, i = n, i+2
 			continue
@@ -1948,7 +1948,7 @@ func appletStrings(args []string) int {
 }
 
 // ===========================================================================
-// Applets: sistema
+// Applets: system
 // ===========================================================================
 
 func appletPwd(args []string) int {
@@ -1969,11 +1969,11 @@ func appletEnv(args []string) int {
 
 func appletSleep(args []string) int {
 	if len(args) < 1 {
-		return fail("sleep: uso: sleep segundos")
+		return fail("sleep: usage: sleep seconds")
 	}
 	sec, err := strconv.ParseFloat(args[0], 64)
 	if err != nil {
-		return fail("sleep: valor inválido: %s", args[0])
+		return fail("sleep: invalid value: %s", args[0])
 	}
 	time.Sleep(time.Duration(sec * float64(time.Second)))
 	return 0
@@ -2037,7 +2037,7 @@ func appletId(args []string) int {
 
 func appletWhich(args []string) int {
 	if len(args) == 0 {
-		return fail("which: uso: which comandos...")
+		return fail("which: usage: which commands...")
 	}
 	rc := 1
 	for _, c := range args {
@@ -2063,12 +2063,12 @@ func appletTop(args []string) int {
 }
 
 // ===========================================================================
-// Applets: cálculo
+// Applets: arithmetic
 // ===========================================================================
 
 func appletExpr(args []string) int {
 	if len(args) == 0 {
-		return fail("expr: uso: expr expressão")
+		return fail("expr: usage: expr expression")
 	}
 	expr := strings.Join(args, " ")
 	v, err := evalExpr(expr)
@@ -2091,7 +2091,7 @@ func evalExpr(s string) (int64, error) {
 	}
 	p.skipSpace()
 	if p.pos < len(p.s) {
-		return 0, fmt.Errorf("token inesperado: %q", p.s[p.pos:])
+		return 0, fmt.Errorf("unexpected token: %q", p.s[p.pos:])
 	}
 	return v, nil
 }
@@ -2158,12 +2158,12 @@ func (p *exprParser) parseMul() (int64, error) {
 			left *= right
 		case '/':
 			if right == 0 {
-				return 0, fmt.Errorf("divisão por zero")
+				return 0, fmt.Errorf("division by zero")
 			}
 			left /= right
 		case '%':
 			if right == 0 {
-				return 0, fmt.Errorf("módulo por zero")
+				return 0, fmt.Errorf("modulo by zero")
 			}
 			left %= right
 		}
@@ -2173,7 +2173,7 @@ func (p *exprParser) parseMul() (int64, error) {
 func (p *exprParser) parseAtom() (int64, error) {
 	p.skipSpace()
 	if p.pos >= len(p.s) {
-		return 0, fmt.Errorf("fim inesperado")
+		return 0, fmt.Errorf("unexpected end")
 	}
 	if p.s[p.pos] == '(' {
 		p.pos++
@@ -2183,7 +2183,7 @@ func (p *exprParser) parseAtom() (int64, error) {
 		}
 		p.skipSpace()
 		if p.pos >= len(p.s) || p.s[p.pos] != ')' {
-			return 0, fmt.Errorf("parêntese não fechado")
+			return 0, fmt.Errorf("unclosed parenthesis")
 		}
 		p.pos++
 		return v, nil
@@ -2193,7 +2193,7 @@ func (p *exprParser) parseAtom() (int64, error) {
 		p.pos++
 	}
 	if start == p.pos {
-		return 0, fmt.Errorf("número esperado em %q", p.s[p.pos:])
+		return 0, fmt.Errorf("number expected at %q", p.s[p.pos:])
 	}
 	return strconv.ParseInt(p.s[start:p.pos], 10, 64)
 }
@@ -2244,7 +2244,7 @@ func evalBc(s string) (float64, error) {
 	}
 	p.skipSpace()
 	if p.pos < len(p.s) {
-		return 0, fmt.Errorf("token inesperado: %q", p.s[p.pos:])
+		return 0, fmt.Errorf("unexpected token: %q", p.s[p.pos:])
 	}
 	return v, nil
 }
@@ -2311,7 +2311,7 @@ func (p *bcParser) parseMul() (float64, error) {
 			left *= right
 		case '/':
 			if right == 0 {
-				return 0, fmt.Errorf("divisão por zero")
+				return 0, fmt.Errorf("division by zero")
 			}
 			left /= right
 		case '%':
@@ -2353,7 +2353,7 @@ func pow(base, exp float64) float64 {
 func (p *bcParser) parseAtom() (float64, error) {
 	p.skipSpace()
 	if p.pos >= len(p.s) {
-		return 0, fmt.Errorf("fim inesperado")
+		return 0, fmt.Errorf("unexpected end")
 	}
 	if p.s[p.pos] == '(' {
 		p.pos++
@@ -2363,7 +2363,7 @@ func (p *bcParser) parseAtom() (float64, error) {
 		}
 		p.skipSpace()
 		if p.pos >= len(p.s) || p.s[p.pos] != ')' {
-			return 0, fmt.Errorf("parêntese não fechado")
+			return 0, fmt.Errorf("unclosed parenthesis")
 		}
 		p.pos++
 		return v, nil
@@ -2378,7 +2378,7 @@ func (p *bcParser) parseAtom() (float64, error) {
 		break
 	}
 	if start == p.pos {
-		return 0, fmt.Errorf("número esperado em %q", p.s[p.pos:])
+		return 0, fmt.Errorf("number expected at %q", p.s[p.pos:])
 	}
 	return strconv.ParseFloat(p.s[start:p.pos], 64)
 }
@@ -2391,7 +2391,7 @@ func formatBc(f float64) string {
 }
 
 // ===========================================================================
-// Applets: hash / codificação
+// Applets: hash / encoding
 // ===========================================================================
 
 func appletSha256sum(args []string) int {
@@ -2545,7 +2545,7 @@ func appletHexdump(args []string) int {
 }
 
 // ===========================================================================
-// Applets: rede
+// Applets: network
 // ===========================================================================
 
 func appletWget(args []string) int {
@@ -2556,18 +2556,18 @@ func appletWget(args []string) int {
 		switch args[i] {
 		case "-O":
 			if i+1 >= len(args) {
-				return fail("wget: -O requer um argumento")
+				return fail("wget: -O requires an argument")
 			}
 			outFile, i = args[i+1], i+2
 		default:
 			if strings.HasPrefix(args[i], "-") {
-				return fail("wget: opção inválida: %s", args[i])
+				return fail("wget: invalid option: %s", args[i])
 			}
 			urls, i = append(urls, args[i]), i+1
 		}
 	}
 	if len(urls) == 0 {
-		return fail("wget: uso: wget [-O arquivo] URL...")
+		return fail("wget: usage: wget [-O file] URL...")
 	}
 	rc := 0
 	for _, u := range urls {
@@ -2631,20 +2631,20 @@ func appletPing(args []string) int {
 		host = a
 	}
 	if host == "" {
-		return fail("ping: uso: ping [-c N] host")
+		return fail("ping: usage: ping [-c N] host")
 	}
 	addrs, err := net.LookupHost(host)
 	if err != nil {
 		return fail("ping: %v", err)
 	}
 	if len(addrs) == 0 {
-		return fail("ping: host não resolvido")
+		return fail("ping: host not resolved")
 	}
 	ip := addrs[0]
-	fmt.Printf("PING %s (%s): %d pacotes\n", host, ip, count)
+	fmt.Printf("PING %s (%s): %d packets\n", host, ip, count)
 	conn, err := net.DialTimeout("ip4:icmp", ip, timeout)
 	if err != nil {
-		return fail("ping: %v (requer privilégios de root/administrador)", err)
+		return fail("ping: %v (requires root/administrator privileges)", err)
 	}
 	defer conn.Close()
 	for i := 0; i < count; i++ {
@@ -2664,7 +2664,7 @@ func appletPing(args []string) int {
 			continue
 		}
 		rtt := time.Since(start)
-		fmt.Printf("%d bytes de %s: icmp_seq=%d ttl=%d time=%.2f ms\n",
+		fmt.Printf("%d bytes from %s: icmp_seq=%d ttl=%d time=%.2f ms\n",
 			n, ip, i, buf[8], float64(rtt.Microseconds())/1000)
 		time.Sleep(time.Second)
 	}
@@ -2690,7 +2690,7 @@ func appletNetstat(args []string) int {
 	if runtime.GOOS == "linux" {
 		return netstatLinux()
 	}
-	fmt.Println("(netstat completo requer /proc ou APIs nativas)")
+	fmt.Println("(full netstat requires /proc or native APIs)")
 	return 0
 }
 
@@ -2754,7 +2754,7 @@ func appletNc(args []string) int {
 			udp, i = true, i+1
 		case "-p":
 			if i+1 >= len(args) {
-				return fail("nc: -p requer um argumento")
+				return fail("nc: -p requires an argument")
 			}
 			port, i = args[i+1], i+2
 		default:
@@ -2769,12 +2769,12 @@ func appletNc(args []string) int {
 	}
 	if listen {
 		if port == "" {
-			return fail("nc: modo -l requer -p porta")
+			return fail("nc: -l mode requires -p port")
 		}
 		return ncListen(port, udp)
 	}
 	if host == "" || port == "" {
-		return fail("nc: uso: nc [-u] host porta   |   nc -l [-u] -p porta")
+		return fail("nc: usage: nc [-u] host port   |   nc -l [-u] -p port")
 	}
 	return ncConnect(host, port, udp)
 }
@@ -2806,7 +2806,7 @@ func ncListen(port string, udp bool) int {
 		return fail("nc: %v", err)
 	}
 	defer ln.Close()
-	fmt.Fprintf(os.Stderr, "escutando em %s (%s)\n", addr, proto)
+	fmt.Fprintf(os.Stderr, "listening on %s (%s)\n", addr, proto)
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -2874,7 +2874,7 @@ func appletRoute(args []string) int {
 }
 
 // ===========================================================================
-// Applets: utilitários
+// Applets: utilities
 // ===========================================================================
 
 func appletEcho(args []string) int {
@@ -2898,7 +2898,7 @@ func appletEcho(args []string) int {
 
 func appletPrintf(args []string) int {
 	if len(args) == 0 {
-		return fail("printf: uso: printf formato [args...]")
+		return fail("printf: usage: printf format [args...]")
 	}
 	format := args[0]
 	rest := args[1:]
@@ -3013,7 +3013,7 @@ func appletYes(args []string) int {
 
 func appletBasename(args []string) int {
 	if len(args) < 1 {
-		return fail("basename: uso: basename caminho")
+		return fail("basename: usage: basename path")
 	}
 	fmt.Println(filepath.Base(args[0]))
 	return 0
@@ -3021,7 +3021,7 @@ func appletBasename(args []string) int {
 
 func appletDirname(args []string) int {
 	if len(args) < 1 {
-		return fail("dirname: uso: dirname caminho")
+		return fail("dirname: usage: dirname path")
 	}
 	fmt.Println(filepath.Dir(args[0]))
 	return 0
@@ -3035,7 +3035,7 @@ func appletSeq(args []string) int {
 		start = 1
 		v, err := strconv.ParseFloat(args[0], 64)
 		if err != nil {
-			return fail("seq: valor inválido: %s", args[0])
+			return fail("seq: invalid value: %s", args[0])
 		}
 		end = v
 	case 2:
@@ -3048,10 +3048,10 @@ func appletSeq(args []string) int {
 		v3, _ := strconv.ParseFloat(args[2], 64)
 		start, step, end = v1, v3, v2
 	default:
-		return fail("seq: uso: seq [início] fim [passo]")
+		return fail("seq: usage: seq [start] end [step]")
 	}
 	if step == 0 {
-		return fail("seq: passo não pode ser zero")
+		return fail("seq: step cannot be zero")
 	}
 	if step > 0 {
 		for i := start; i <= end; i += step {
@@ -3075,7 +3075,7 @@ func printNum(f float64) {
 
 func appletXargs(args []string) int {
 	if len(args) == 0 {
-		return fail("xargs: uso: xargs comando [args...]")
+		return fail("xargs: usage: xargs command [args...]")
 	}
 	cmdName := args[0]
 	baseArgs := args[1:]
@@ -3101,7 +3101,7 @@ func appletXargs(args []string) int {
 }
 
 // ===========================================================================
-// sh — shell com pipes, redirecionamentos e operadores lógicos
+// sh — shell with pipes, redirections and logical operators
 // ===========================================================================
 
 func appletSh(args []string) int {

@@ -1321,7 +1321,8 @@ func appletTr(args []string) int {
 	if len(args) < 2 {
 		return fail("tr: usage: tr set1 set2")
 	}
-	set1, set2 := args[0], args[1]
+	set1 := expandTrSet(args[0])
+	set2 := expandTrSet(args[1])
 	if len(set1) != len(set2) {
 		return fail("tr: sets must have the same length")
 	}
@@ -1337,6 +1338,32 @@ func appletTr(args []string) int {
 	}
 	os.Stdout.Write(out)
 	return 0
+}
+
+// expandTrSet expands ranges like "a-z", "A-Z", "0-9" into the full set.
+func expandTrSet(s string) string {
+	var out []byte
+	i := 0
+	for i < len(s) {
+		if i+2 < len(s) && s[i+1] == '-' {
+			start := s[i]
+			end := s[i+2]
+			if start <= end {
+				for c := start; c <= end; c++ {
+					out = append(out, c)
+				}
+			} else {
+				for c := start; c >= end; c-- {
+					out = append(out, c)
+				}
+			}
+			i += 3
+			continue
+		}
+		out = append(out, s[i])
+		i++
+	}
+	return string(out)
 }
 
 func appletCut(args []string) int {

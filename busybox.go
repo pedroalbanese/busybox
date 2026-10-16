@@ -8,7 +8,6 @@
 //   busybox <applet> [args...]
 //   busybox --list
 //   ln -s busybox ls && ./ls -la
-
 package main
 
 import (

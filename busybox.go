@@ -7,6 +7,7 @@
 // Usage:
 //   busybox <applet> [args...]
 //   busybox --list
+//   busybox --help [applet]
 //   ln -s busybox ls && ./ls -la
 package main
 
@@ -66,6 +67,7 @@ func init() {
 		"pwd": appletPwd, "env": appletEnv, "sleep": appletSleep, "uname": appletUname,
 		"whoami": appletWhoami, "hostname": appletHostname, "date": appletDate,
 		"id": appletId, "which": appletWhich, "top": appletTop,
+		"cal": appletCal,
 		// arithmetic
 		"expr": appletExpr, "bc": appletBc,
 		// hash / encoding
@@ -92,6 +94,13 @@ func main() {
 		name := os.Args[1]
 		switch name {
 		case "--help", "-h", "help":
+			if len(os.Args) >= 3 {
+				if fn, ok := applets[os.Args[2]]; ok {
+					os.Exit(fn([]string{"-h"}))
+				}
+				fmt.Fprintf(os.Stderr, "busybox: unknown applet: %s\n", os.Args[2])
+				os.Exit(127)
+			}
 			printUsage()
 			os.Exit(0)
 		case "--list", "-l":
@@ -114,7 +123,8 @@ func main() {
 
 func printUsage() {
 	fmt.Fprintln(os.Stderr, "Usage: busybox <applet> [args...]")
-	fmt.Fprintln(os.Stderr, "       busybox --list | --help")
+	fmt.Fprintln(os.Stderr, "       busybox --list")
+	fmt.Fprintln(os.Stderr, "       busybox --help [applet]")
 }
 
 func listApplets() {
@@ -198,6 +208,9 @@ func appletLs(args []string) int {
 			all = true
 		case "-la", "-al":
 			long, all = true, true
+		case "-h", "--help":
+			fmt.Fprintln(os.Stderr, "Usage: ls [-l] [-a] [paths...]")
+			return 0
 		default:
 			if strings.HasPrefix(a, "-") && len(a) > 1 {
 				return fail("ls: invalid option: %s", a)
@@ -312,6 +325,9 @@ func appletRm(args []string) int {
 			force = true
 		case "-rf", "-fr":
 			recursive, force = true, true
+		case "-h", "--help":
+			fmt.Fprintln(os.Stderr, "Usage: rm [-r] [-f] files...")
+			return 0
 		default:
 			if strings.HasPrefix(a, "-") && len(a) > 1 {
 				return fail("rm: invalid option: %s", a)
@@ -349,6 +365,10 @@ func appletMkdir(args []string) int {
 			parents = true
 			continue
 		}
+		if a == "-h" || a == "--help" {
+			fmt.Fprintln(os.Stderr, "Usage: mkdir [-p] dirs...")
+			return 0
+		}
 		dirs = append(dirs, a)
 	}
 	if len(dirs) == 0 {
@@ -376,6 +396,10 @@ func appletRmdir(args []string) int {
 	}
 	rc := 0
 	for _, d := range args {
+		if d == "-h" || d == "--help" {
+			fmt.Fprintln(os.Stderr, "Usage: rmdir dirs...")
+			return 0
+		}
 		if err := os.Remove(d); err != nil {
 			fmt.Fprintf(os.Stderr, "rmdir: %s: %v\n", d, err)
 			rc = 1
@@ -391,6 +415,10 @@ func appletTouch(args []string) int {
 	rc := 0
 	now := time.Now()
 	for _, p := range args {
+		if p == "-h" || p == "--help" {
+			fmt.Fprintln(os.Stderr, "Usage: touch files...")
+			return 0
+		}
 		f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY, 0o644)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "touch: %s: %v\n", p, err)
@@ -412,6 +440,10 @@ func appletFind(args []string) int {
 		i++
 	}
 	for i < len(args) {
+		if args[i] == "-h" || args[i] == "--help" {
+			fmt.Fprintln(os.Stderr, "Usage: find [dir] [-name pattern]")
+			return 0
+		}
 		if args[i] == "-name" && i+1 < len(args) {
 			pattern = args[i+1]
 			i += 2
@@ -440,8 +472,9 @@ func appletDu(args []string) int {
 	var paths []string
 	for _, a := range args {
 		switch a {
-		case "-h":
-			human = true
+		case "-h", "--help":
+			fmt.Fprintln(os.Stderr, "Usage: du [-h] [-s] [paths...]")
+			return 0
 		case "-s":
 		default:
 			paths = append(paths, a)
@@ -493,6 +526,10 @@ func appletDd(args []string) int {
 	skip := 0
 	seek := 0
 	for _, a := range args {
+		if a == "-h" || a == "--help" {
+			fmt.Fprintln(os.Stderr, "Usage: dd if=... of=... [bs=N] [count=N] [skip=N] [seek=N]")
+			return 0
+		}
 		kv := strings.SplitN(a, "=", 2)
 		if len(kv) != 2 {
 			continue
@@ -617,6 +654,9 @@ func appletTar(args []string) int {
 				return fail("tar: -f requires an argument")
 			}
 			archive, i = args[i+1], i+2
+		case a == "-h" || a == "--help":
+			fmt.Fprintln(os.Stderr, "Usage: tar -c|-x|-t [-z] -f file [files...]")
+			return 0
 		case strings.HasPrefix(a, "-") && len(a) > 1:
 			for _, c := range a[1:] {
 				switch c {
@@ -781,6 +821,9 @@ func appletGzip(args []string) int {
 			keep = true
 		case "-c":
 			toStdout = true
+		case "-h", "--help":
+			fmt.Fprintln(os.Stderr, "Usage: gzip [-d] [-k] [-c] files...")
+			return 0
 		default:
 			files = append(files, a)
 		}
@@ -859,6 +902,10 @@ func appletStat(args []string) int {
 	}
 	rc := 0
 	for _, p := range args {
+		if p == "-h" || p == "--help" {
+			fmt.Fprintln(os.Stderr, "Usage: stat files...")
+			return 0
+		}
 		info, err := os.Stat(p)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "stat: %s: %v\n", p, err)
@@ -884,6 +931,10 @@ func appletChmod(args []string) int {
 	}
 	rc := 0
 	for _, p := range args[1:] {
+		if p == "-h" || p == "--help" {
+			fmt.Fprintln(os.Stderr, "Usage: chmod mode files...")
+			return 0
+		}
 		if err := os.Chmod(p, os.FileMode(mode)); err != nil {
 			fmt.Fprintf(os.Stderr, "chmod: %s: %v\n", p, err)
 			rc = 1
@@ -907,6 +958,10 @@ func appletLn(args []string) int {
 		if a == "-s" {
 			symlink = true
 			continue
+		}
+		if a == "-h" || a == "--help" {
+			fmt.Fprintln(os.Stderr, "Usage: ln [-s] target link")
+			return 0
 		}
 		rest = append(rest, a)
 	}
@@ -954,6 +1009,9 @@ func appletSplit(args []string) int {
 				return fail("split: invalid value: %s", args[i+1])
 			}
 			linesPerFile, i = n, i+2
+		case "-h", "--help":
+			fmt.Fprintln(os.Stderr, "Usage: split [-l N] [input] [prefix]")
+			return 0
 		default:
 			if input == "" {
 				input, i = args[i], i+1
@@ -1001,6 +1059,10 @@ func appletSplit(args []string) int {
 func appletHexedit(args []string) int {
 	if len(args) < 1 {
 		return fail("hexedit: usage: hexedit file")
+	}
+	if args[0] == "-h" || args[0] == "--help" {
+		fmt.Fprintln(os.Stderr, "Usage: hexedit file")
+		return 0
 	}
 	f, err := os.OpenFile(args[0], os.O_RDWR, 0o644)
 	if err != nil {
@@ -1050,6 +1112,10 @@ func appletCat(args []string) int {
 	}
 	rc := 0
 	for _, name := range args {
+		if name == "-h" || name == "--help" {
+			fmt.Fprintln(os.Stderr, "Usage: cat [files...]")
+			return 0
+		}
 		f, err := openInput(name)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "cat: %s: %v\n", name, err)
@@ -1066,6 +1132,10 @@ func appletHead(args []string) int {
 	n := 10
 	i := 0
 	for i < len(args) {
+		if args[i] == "-h" || args[i] == "--help" {
+			fmt.Fprintln(os.Stderr, "Usage: head [-n N] [files...]")
+			return 0
+		}
 		if args[i] == "-n" && i+1 < len(args) {
 			v, err := strconv.Atoi(args[i+1])
 			if err != nil {
@@ -1104,6 +1174,10 @@ func appletTail(args []string) int {
 	n := 10
 	i := 0
 	for i < len(args) {
+		if args[i] == "-h" || args[i] == "--help" {
+			fmt.Fprintln(os.Stderr, "Usage: tail [-n N] [files...]")
+			return 0
+		}
 		if args[i] == "-n" && i+1 < len(args) {
 			v, err := strconv.Atoi(args[i+1])
 			if err != nil {
@@ -1155,6 +1229,9 @@ func appletWc(args []string) int {
 			countWords = true
 		case "-c":
 			countBytes = true
+		case "-h", "--help":
+			fmt.Fprintln(os.Stderr, "Usage: wc [-l] [-w] [-c] [files...]")
+			return 0
 		default:
 			files = append(files, a)
 		}
@@ -1208,6 +1285,9 @@ func appletGrep(args []string) int {
 					invert = true
 				case 'n':
 					showNum = true
+				case 'h':
+					fmt.Fprintln(os.Stderr, "Usage: grep [-i] [-v] [-n] pattern [files...]")
+					return 0
 				default:
 					return fail("grep: invalid option: -%c", c)
 				}
@@ -1268,6 +1348,10 @@ func appletSort(args []string) int {
 	}
 	var lines []string
 	for _, name := range args {
+		if name == "-h" || name == "--help" {
+			fmt.Fprintln(os.Stderr, "Usage: sort [files...]")
+			return 0
+		}
 		f, err := openInput(name)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "sort: %s: %v\n", name, err)
@@ -1293,6 +1377,10 @@ func appletUniq(args []string) int {
 	}
 	rc := 0
 	for _, name := range args {
+		if name == "-h" || name == "--help" {
+			fmt.Fprintln(os.Stderr, "Usage: uniq [files...]")
+			return 0
+		}
 		f, err := openInput(name)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "uniq: %s: %v\n", name, err)
@@ -1319,6 +1407,10 @@ func appletUniq(args []string) int {
 func appletTr(args []string) int {
 	if len(args) < 2 {
 		return fail("tr: usage: tr set1 set2")
+	}
+	if args[0] == "-h" || args[0] == "--help" {
+		fmt.Fprintln(os.Stderr, "Usage: tr set1 set2")
+		return 0
 	}
 	set1 := expandTrSet(args[0])
 	set2 := expandTrSet(args[1])
@@ -1389,6 +1481,9 @@ func appletCut(args []string) int {
 				fields = append(fields, n)
 			}
 			i += 2
+		case "-h", "--help":
+			fmt.Fprintln(os.Stderr, "Usage: cut -d delim -f fields [files...]")
+			return 0
 		default:
 			files, i = append(files, args[i]), i+1
 		}
@@ -1431,6 +1526,10 @@ func appletTee(args []string) int {
 		if a == "-a" {
 			appendMode = true
 			continue
+		}
+		if a == "-h" || a == "--help" {
+			fmt.Fprintln(os.Stderr, "Usage: tee [-a] files...")
+			return 0
 		}
 		files = append(files, a)
 	}
@@ -1477,6 +1576,9 @@ func appletSed(args []string) int {
 				return fail("sed: -e requires an argument")
 			}
 			scripts, i = append(scripts, args[i+1]), i+2
+		case a == "-h" || a == "--help":
+			fmt.Fprintln(os.Stderr, "Usage: sed [-n] [-e script]... [script] [files...]")
+			return 0
 		case strings.HasPrefix(a, "-"):
 			return fail("sed: invalid option: %s", a)
 		default:
@@ -1644,6 +1746,9 @@ func appletAwk(args []string) int {
 	i := 0
 	for i < len(args) {
 		switch {
+		case args[i] == "-h" || args[i] == "--help":
+			fmt.Fprintln(os.Stderr, "Usage: awk [-F sep] 'program' [files...]")
+			return 0
 		case args[i] == "-F":
 			if i+1 >= len(args) {
 				return fail("awk: -F requires an argument")
@@ -1872,6 +1977,10 @@ func appletPatch(args []string) int {
 			outFile, i = args[i+1], i+2
 			continue
 		}
+		if args[i] == "-h" || args[i] == "--help" {
+			fmt.Fprintln(os.Stderr, "Usage: patch [-o output] file patchfile")
+			return 0
+		}
 		rest, i = append(rest, args[i]), i+1
 	}
 	if len(rest) < 2 {
@@ -1931,6 +2040,10 @@ func appletStrings(args []string) int {
 	var files []string
 	i := 0
 	for i < len(args) {
+		if args[i] == "-h" || args[i] == "--help" {
+			fmt.Fprintln(os.Stderr, "Usage: strings [-n N] [files...]")
+			return 0
+		}
 		if args[i] == "-n" && i+1 < len(args) {
 			n, err := strconv.Atoi(args[i+1])
 			if err != nil {
@@ -2011,6 +2124,10 @@ func appletUname(args []string) int {
 		if a == "-a" {
 			all = true
 		}
+		if a == "-h" || a == "--help" {
+			fmt.Fprintln(os.Stderr, "Usage: uname [-a]")
+			return 0
+		}
 	}
 	if all {
 		fmt.Printf("%s %s %s %s %s\n", runtime.GOOS, hostnameSafe(),
@@ -2067,6 +2184,10 @@ func appletWhich(args []string) int {
 	}
 	rc := 1
 	for _, c := range args {
+		if c == "-h" || c == "--help" {
+			fmt.Fprintln(os.Stderr, "Usage: which commands...")
+			return 0
+		}
 		if p, err := exec.LookPath(c); err == nil {
 			fmt.Println(p)
 			rc = 0
@@ -2089,12 +2210,272 @@ func appletTop(args []string) int {
 }
 
 // ===========================================================================
+// Applet: cal
+// ===========================================================================
+
+var (
+	calYear          int
+	calOmitUnderline bool
+)
+
+func appletCal(args []string) int {
+	calYear = time.Now().Year()
+	calOmitUnderline = false
+	var positional []string
+	i := 0
+	for i < len(args) {
+		a := args[i]
+		switch {
+		case a == "-h" || a == "--help":
+			fmt.Fprintln(os.Stderr, `Usage: cal [-y] [-o] [month] [year]
+       cal .
+       cal -y
+
+Display a calendar.
+
+Options:
+  -y          Display the full year
+  -o          Omit underline for current day
+  -h, --help  Show this help
+
+Examples:
+  cal          Show current month with today underlined
+  cal .        Show three months (prev, current, next) with today underlined
+  cal -y       Show the full current year
+  cal 2026     Show the full year 2026
+  cal 10 2026  Show October 2026`)
+			return 0
+		case a == "-y":
+			positional = append(positional, "+")
+			i++
+		case a == "-o":
+			calOmitUnderline = true
+			i++
+		case a == "-j":
+			i++
+		case strings.HasPrefix(a, "-"):
+			return fail("cal: invalid option: %s", a)
+		default:
+			positional = append(positional, a)
+			i++
+		}
+	}
+
+	if len(positional) == 0 {
+		year, month, day := time.Now().Date()
+		printCalWithUnderline(year, int(month), day)
+		return 0
+	}
+
+	switch positional[0] {
+	case ".":
+		year, month, day := time.Now().Date()
+		calendars := []string{
+			getCalendar(year, int(month)-1),
+			getCalendar(year, int(month)),
+			getCalendar(year, int(month)+1),
+		}
+		lines := make([]string, 9)
+		for i := range lines {
+			if i == 0 {
+				lines[i] = strings.Repeat(" ", 32) + fmt.Sprintf("%d", year)
+				continue
+			}
+			lines[i] = strings.Join([]string{
+				" " + getMonthRows(calendars[0], i-1),
+				" " + getMonthRows(calendars[1], i-1),
+				" " + getMonthRows(calendars[2], i-1),
+			}, " ")
+		}
+		dayStr := fmt.Sprintf("%2d", day)
+		dayUnderlined := dayStr
+		if !calOmitUnderline {
+			dayUnderlined = underline(dayStr)
+		}
+		lines[2] = strings.Replace(lines[2], dayStr, dayUnderlined, 1)
+		for _, line := range lines {
+			fmt.Println(line)
+		}
+	case "+":
+		printFullCal(calYear)
+	default:
+		if y, err := strconv.Atoi(positional[0]); err == nil {
+			calYear = y
+			printFullCal(calYear)
+			return 0
+		}
+		if len(positional) >= 2 {
+			m, err1 := strconv.Atoi(positional[0])
+			y, err2 := strconv.Atoi(positional[1])
+			if err1 == nil && err2 == nil && m >= 1 && m <= 12 {
+				printCalWithUnderline(y, m, -1)
+				return 0
+			}
+		}
+		return fail("cal: usage: cal [-y] [month] [year]")
+	}
+	return 0
+}
+
+func underline(text string) string {
+	return "\033[4m" + text + "\033[0m"
+}
+
+func getCalendar(year, month int) string {
+	t := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
+	monthName := t.Month().String()
+	cal := fmt.Sprintf("%11s          \nSu Mo Tu We Th Fr Sa \n", monthName[:3])
+
+	lastDay := getDaysInMonth(year, month)
+	startWeekday := int(t.Weekday())
+
+	weekday := startWeekday
+
+	cal += strings.Repeat("   ", weekday)
+
+	for day := 1; day <= lastDay; day++ {
+		dayStr := fmt.Sprintf("%2d", day)
+		if year == time.Now().Year() && month == int(time.Now().Month()) && day == time.Now().Day() && !calOmitUnderline {
+			dayStr = "\033[4m" + dayStr + "\033[0m"
+		}
+		cal += dayStr + " "
+		weekday = (weekday + 1) % 7
+		if weekday == 0 && day < lastDay {
+			cal += "\n"
+		}
+	}
+
+	if weekday != 0 {
+		cal += strings.Repeat("   ", 7-weekday)
+		cal += "\n"
+	}
+
+	return cal
+}
+
+func getDaysInMonth(year, month int) int {
+	return time.Date(year, time.Month(month+1), 0, 0, 0, 0, 0, time.UTC).Day()
+}
+
+func getMonthRows(calendar string, row int) string {
+	rows := strings.Split(calendar, "\n")
+	if len(rows) > row {
+		rowStr := rows[row]
+		if len(rowStr) < 21 {
+			rowStr += strings.Repeat(" ", 21-len(rowStr))
+		}
+		return rowStr
+	}
+	return strings.Repeat(" ", 21)
+}
+
+func printFullCal(year int) {
+	thisDate := time.Date(year, 1, 1, 1, 1, 1, 1, time.UTC)
+	var (
+		dayArr                  [12][7][6]int
+		month, lastMonth        time.Month
+		weekInMonth, dayInMonth int
+	)
+	for thisDate.Year() == year {
+		if month = thisDate.Month(); month != lastMonth {
+			weekInMonth = 0
+			dayInMonth = 1
+		}
+		weekday := thisDate.Weekday()
+		if weekday == 0 && dayInMonth > 1 {
+			weekInMonth++
+		}
+		dayArr[int(month)-1][weekday][weekInMonth] = thisDate.Day()
+		lastMonth = month
+		dayInMonth++
+		thisDate = thisDate.Add(time.Hour * 24)
+	}
+	fmt.Println(strings.Repeat(" ", 32) + fmt.Sprintf("%d", year))
+
+	months := [12]string{
+		"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+		"Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+	}
+
+	for qtr := 0; qtr < 4; qtr++ {
+		for monthInQtr := 0; monthInQtr < 3; monthInQtr++ {
+			fmt.Printf("         %s           ", months[qtr*3+monthInQtr])
+		}
+		fmt.Println()
+		for monthInQtr := 0; monthInQtr < 3; monthInQtr++ {
+			days := [7]string{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"}
+			for _, day := range days {
+				fmt.Printf(" %s", day[:2])
+			}
+			fmt.Printf("  ")
+		}
+		fmt.Println()
+		for weekInMonth = 0; weekInMonth < 6; weekInMonth++ {
+			for monthInQtr := 0; monthInQtr < 3; monthInQtr++ {
+				for day := 0; day < 7; day++ {
+					if dayArr[qtr*3+monthInQtr][day][weekInMonth] == 0 {
+						fmt.Printf("   ")
+					} else {
+						fmt.Printf("%3d", dayArr[qtr*3+monthInQtr][day][weekInMonth])
+					}
+				}
+				fmt.Printf("  ")
+			}
+			fmt.Println()
+		}
+		fmt.Println()
+	}
+}
+
+func printCalWithUnderline(year, month, currentDay int) {
+	monthName := time.Month(month).String()[:3]
+	fmt.Printf("       %s %d\n", monthName, year)
+	fmt.Println(" Su Mo Tu We Th Fr Sa")
+
+	startDate := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
+	startWeekday := int(startDate.Weekday())
+	daysInMonth := time.Date(year, time.Month(month+1), 0, 0, 0, 0, 0, time.UTC).Day()
+
+	day := 1
+	lines := []string{}
+	line := ""
+	for week := 0; day <= daysInMonth; week++ {
+		line = ""
+		for weekday := 0; weekday < 7; weekday++ {
+			if week == 0 && weekday < startWeekday {
+				line += "   "
+			} else if day == currentDay {
+				dayStr := fmt.Sprintf("%2d", day)
+				if !calOmitUnderline {
+					dayStr = underline(dayStr)
+				}
+				line += " " + dayStr
+				day++
+			} else if day <= daysInMonth {
+				line += fmt.Sprintf(" %2d", day)
+				day++
+			}
+		}
+		lines = append(lines, line)
+	}
+
+	for _, line := range lines {
+		fmt.Println(line)
+	}
+	fmt.Println()
+}
+
+// ===========================================================================
 // Applets: arithmetic
 // ===========================================================================
 
 func appletExpr(args []string) int {
 	if len(args) == 0 {
 		return fail("expr: usage: expr expression")
+	}
+	if args[0] == "-h" || args[0] == "--help" {
+		fmt.Fprintln(os.Stderr, "Usage: expr expression")
+		return 0
 	}
 	expr := strings.Join(args, " ")
 	v, err := evalExpr(expr)
@@ -2224,12 +2605,66 @@ func (p *exprParser) parseAtom() (int64, error) {
 	return strconv.ParseInt(p.s[start:p.pos], 10, 64)
 }
 
+var bcScale int = 0
+
 func appletBc(args []string) int {
-	if len(args) == 0 {
-		args = []string{"-"}
+	var files []string
+	i := 0
+	for i < len(args) {
+		a := args[i]
+		switch {
+		case a == "-h" || a == "--help":
+			fmt.Fprintln(os.Stderr, `Usage: bc [-s N] [files...]
+
+Arbitrary precision calculator.
+
+Options:
+  -s N, --scale=N  Set the number of decimal places
+  -h, --help       Show this help
+
+Inside the script, the directive "scale=N" also works.
+
+Examples:
+  bc -s 2               Run bc with 2 decimal places
+  echo "10/3" | bc -s 2 Print 3.33
+  echo "scale=4; 1/7" | bc`)
+			return 0
+		case a == "-s" || a == "--scale":
+			if i+1 >= len(args) {
+				return fail("bc: -s requires an argument")
+			}
+			n, err := strconv.Atoi(args[i+1])
+			if err != nil || n < 0 {
+				return fail("bc: invalid scale: %s", args[i+1])
+			}
+			bcScale = n
+			i += 2
+		case strings.HasPrefix(a, "--scale="):
+			n, err := strconv.Atoi(a[8:])
+			if err != nil || n < 0 {
+				return fail("bc: invalid scale: %s", a[8:])
+			}
+			bcScale = n
+			i++
+		case strings.HasPrefix(a, "-s"):
+			n, err := strconv.Atoi(a[2:])
+			if err != nil || n < 0 {
+				return fail("bc: invalid scale: %s", a[2:])
+			}
+			bcScale = n
+			i++
+		case strings.HasPrefix(a, "-"):
+			return fail("bc: invalid option: %s", a)
+		default:
+			files = append(files, a)
+			i++
+		}
+	}
+	if len(files) == 0 {
+		files = []string{"-"}
 	}
 	rc := 0
-	for _, name := range args {
+	for _, name := range files {
 		f, err := openInput(name)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "bc: %s: %v\n", name, err)
@@ -2246,6 +2681,20 @@ func appletBc(args []string) int {
 			for _, part := range strings.Split(line, ";") {
 				part = strings.TrimSpace(part)
 				if part == "" {
+					continue
+				}
+				if part == "quit" {
+					f.Close()
+					return rc
+				}
+				if strings.HasPrefix(part, "scale=") {
+					n, err := strconv.Atoi(strings.TrimSpace(part[6:]))
+					if err != nil || n < 0 {
+						fmt.Fprintf(os.Stderr, "bc: invalid scale: %s\n", part)
+						rc = 1
+						continue
+					}
+					bcScale = n
 					continue
 				}
 				v, err := evalBc(part)
@@ -2410,6 +2859,9 @@ func (p *bcParser) parseAtom() (float64, error) {
 }
 
 func formatBc(f float64) string {
+	if bcScale > 0 {
+		return strconv.FormatFloat(f, 'f', bcScale, 64)
+	}
 	if f == float64(int64(f)) {
 		return strconv.FormatInt(int64(f), 10)
 	}
@@ -2436,6 +2888,10 @@ func hashSum(args []string, newHash func() hash.Hash, name string) int {
 	}
 	rc := 0
 	for _, fname := range args {
+		if fname == "-h" || fname == "--help" {
+			fmt.Fprintf(os.Stderr, "Usage: %s [files...]\n", name)
+			return 0
+		}
 		f, err := openInput(fname)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%s: %s: %v\n", name, fname, err)
@@ -2466,6 +2922,10 @@ func appletCksum(args []string) int {
 	}
 	rc := 0
 	for _, name := range args {
+		if name == "-h" || name == "--help" {
+			fmt.Fprintln(os.Stderr, "Usage: cksum [files...]")
+			return 0
+		}
 		f, err := openInput(name)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "cksum: %s: %v\n", name, err)
@@ -2491,6 +2951,10 @@ func appletBase64(args []string) int {
 		if a == "-d" || a == "--decode" {
 			decode = true
 			continue
+		}
+		if a == "-h" || a == "--help" {
+			fmt.Fprintln(os.Stderr, "Usage: base64 [-d] [files...]")
+			return 0
 		}
 		files = append(files, a)
 	}
@@ -2532,6 +2996,10 @@ func appletHexdump(args []string) int {
 	}
 	rc := 0
 	for _, name := range args {
+		if name == "-h" || name == "--help" {
+			fmt.Fprintln(os.Stderr, "Usage: hexdump [files...]")
+			return 0
+		}
 		f, err := openInput(name)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "hexdump: %s: %v\n", name, err)
@@ -2585,6 +3053,9 @@ func appletWget(args []string) int {
 				return fail("wget: -O requires an argument")
 			}
 			outFile, i = args[i+1], i+2
+		case "-h", "--help":
+			fmt.Fprintln(os.Stderr, "Usage: wget [-O file] URL...")
+			return 0
 		default:
 			if strings.HasPrefix(args[i], "-") {
 				return fail("wget: invalid option: %s", args[i])
@@ -2640,6 +3111,10 @@ func appletPing(args []string) int {
 	timeout := 5 * time.Second
 	var host string
 	for _, a := range args {
+		if a == "-h" || a == "--help" {
+			fmt.Fprintln(os.Stderr, "Usage: ping [-c N] host")
+			return 0
+		}
 		if strings.HasPrefix(a, "-c") {
 			v := strings.TrimPrefix(a, "-c")
 			v = strings.TrimPrefix(v, "=")
@@ -2783,6 +3258,9 @@ func appletNc(args []string) int {
 				return fail("nc: -p requires an argument")
 			}
 			port, i = args[i+1], i+2
+		case "-h", "--help":
+			fmt.Fprintln(os.Stderr, "Usage: nc [-u] host port   |   nc -l [-u] -p port")
+			return 0
 		default:
 			if host == "" {
 				host, i = args[i], i+1
@@ -2911,6 +3389,10 @@ func appletEcho(args []string) int {
 			noNewline, i = true, i+1
 			continue
 		}
+		if args[i] == "-h" || args[i] == "--help" {
+			fmt.Fprintln(os.Stderr, "Usage: echo [-n] [args...]")
+			return 0
+		}
 		break
 	}
 	out := strings.Join(args[i:], " ")
@@ -2925,6 +3407,10 @@ func appletEcho(args []string) int {
 func appletPrintf(args []string) int {
 	if len(args) == 0 {
 		return fail("printf: usage: printf format [args...]")
+	}
+	if args[0] == "-h" || args[0] == "--help" {
+		fmt.Fprintln(os.Stderr, "Usage: printf format [args...]")
+		return 0
 	}
 	format := args[0]
 	rest := args[1:]

@@ -9,10 +9,12 @@
 //   busybox --list
 //   busybox --help [applet]
 //   ln -s busybox ls && ./ls -la
+
 package main
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bufio"
 	"compress/gzip"
 	"crypto/md5"
@@ -55,14 +57,15 @@ func init() {
 		"ls": appletLs, "cp": appletCp, "mv": appletMv, "rm": appletRm,
 		"mkdir": appletMkdir, "rmdir": appletRmdir, "touch": appletTouch,
 		"find": appletFind, "du": appletDu, "df": appletDf, "dd": appletDd,
-		"tar": appletTar, "gzip": appletGzip, "stat": appletStat,
+		"tar": appletTar, "gzip": appletGzip, "zip": appletZip, "unzip": appletUnzip,
+		"stat": appletStat,
 		"chmod": appletChmod, "chown": appletChown, "ln": appletLn,
 		"readlink": appletReadlink, "split": appletSplit, "hexedit": appletHexedit,
 		// text
 		"cat": appletCat, "head": appletHead, "tail": appletTail, "wc": appletWc,
 		"grep": appletGrep, "sort": appletSort, "uniq": appletUniq, "tr": appletTr,
 		"cut": appletCut, "tee": appletTee, "sed": appletSed, "awk": appletAwk,
-		"diff": appletDiff, "patch": appletPatch, "strings": appletStrings,
+		"diff": appletDiff, "patch": appletPatch, "strings": appletStrings, "nl": appletNl,
 		// system
 		"pwd": appletPwd, "env": appletEnv, "sleep": appletSleep, "uname": appletUname,
 		"whoami": appletWhoami, "hostname": appletHostname, "date": appletDate,
@@ -175,7 +178,7 @@ func readLines(name string) ([]string, error) {
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 1024*1024), 1024*1024)
 	for sc.Scan() {
-		lines = append(lines, sc.Text())
+		lines = append(lines, strings.TrimSuffix(sc.Text(), "\r"))
 	}
 	return lines, sc.Err()
 }
@@ -896,6 +899,436 @@ func gzipDecompress(name string, toStdout, keep bool) int {
 	return 0
 }
 
+// ===========================================================================
+// Applet: zip / unzip
+// ===========================================================================
+
+func appletZip(args []string) int {
+	recursive := false
+	quiet := false
+	level := uint16(zip.Deflate) // default: Deflate
+	var archive string
+	var files []string
+	var deleteMode bool
+
+	i := 0
+	for i < len(args) {
+		a := args[i]
+		switch {
+		case a == "-h" || a == "--help":
+			fmt.Fprintln(os.Stderr, `Usage: zip [-r] [-q] [-0|-9] archive.zip files...
+       zip -d archive.zip files...
+       zip -l archive.zip
+
+Options:
+  -r   Recurse into directories
+  -q   Quiet (suppress per-file output)
+  -0   Store only (no compression)
+  -9   Maximum compression (Deflate)
+  -d   Delete entries from the archive
+  -l   List archive contents
+  -h, --help  Show this help`)
+			return 0
+		case a == "-r":
+			recursive, i = true, i+1
+		case a == "-q":
+			quiet, i = true, i+1
+		case a == "-0":
+			level, i = zip.Store, i+1
+		case a == "-9":
+			level, i = zip.Deflate, i+1
+		case a == "-d":
+			deleteMode, i = true, i+1
+		case a == "-l":
+			if i+1 >= len(args) {
+				return fail("zip: -l requires an archive name")
+			}
+			return zipList(args[i+1], quiet)
+		case strings.HasPrefix(a, "-") && len(a) > 1:
+			return fail("zip: invalid option: %s", a)
+		default:
+			if archive == "" {
+				archive, i = a, i+1
+			} else {
+				files, i = append(files, a), i+1
+			}
+		}
+	}
+	if archive == "" {
+		return fail("zip: usage: zip [-r] [-q] [-0|-9] archive.zip files...")
+	}
+	if deleteMode {
+		if len(files) == 0 {
+			return fail("zip: -d requires at least one entry name")
+		}
+		return zipDelete(archive, files, quiet)
+	}
+	if len(files) == 0 {
+		return fail("zip: nothing to do (no input files)")
+	}
+	return zipCreate(archive, files, recursive, quiet, level)
+}
+
+func zipCreate(archive string, files []string, recursive, quiet bool, level uint16) int {
+	// Rebuild archive from scratch, preserving entries not being overwritten.
+	type existingEntry struct {
+		hdr  *zip.FileHeader
+		data []byte
+	}
+	var existing []existingEntry
+	if f, err := zip.OpenReader(archive); err == nil {
+		for _, zf := range f.File {
+			rc, err := zf.Open()
+			if err != nil {
+				f.Close()
+				return fail("zip: %s: %v", archive, err)
+			}
+			data, _ := io.ReadAll(rc)
+			rc.Close()
+			hdr := zf.FileHeader
+			existing = append(existing, existingEntry{&hdr, data})
+		}
+		f.Close()
+	}
+
+	type newEntry struct {
+		name string
+		info os.FileInfo
+	}
+	var entries []newEntry
+	seen := map[string]bool{}
+
+	addFile := func(path string, info os.FileInfo) {
+		if info.IsDir() {
+			name := filepath.ToSlash(path) + "/"
+			if !seen[name] {
+				seen[name] = true
+				entries = append(entries, newEntry{name, info})
+			}
+			return
+		}
+		name := filepath.ToSlash(path)
+		if !seen[name] {
+			seen[name] = true
+			entries = append(entries, newEntry{name, info})
+		}
+	}
+
+	for _, f := range files {
+		info, err := os.Lstat(f)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "zip: %s: %v\n", f, err)
+			continue
+		}
+		if info.IsDir() {
+			if !recursive {
+				fmt.Fprintf(os.Stderr, "zip: %s is a directory (use -r)\n", f)
+				continue
+			}
+			filepath.Walk(f, func(p string, fi os.FileInfo, err error) error {
+				if err != nil {
+					return nil
+				}
+				if p == f {
+					return nil
+				}
+				addFile(p, fi)
+				return nil
+			})
+		} else {
+			addFile(f, info)
+		}
+	}
+
+	if len(entries) == 0 && len(existing) == 0 {
+		return fail("zip: nothing to do")
+	}
+
+	out, err := os.Create(archive)
+	if err != nil {
+		return fail("zip: %v", err)
+	}
+	defer out.Close()
+	zw := zip.NewWriter(out)
+
+	for _, e := range existing {
+		if seen[e.hdr.Name] {
+			continue
+		}
+		hdr := *e.hdr
+		w, err := zw.CreateHeader(&hdr)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "zip: %v\n", err)
+			continue
+		}
+		w.Write(e.data)
+	}
+
+	// Use the caller-selected method (default Deflate).
+	method := level
+	for _, e := range entries {
+		hdr, err := zip.FileInfoHeader(e.info)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "zip: %s: %v\n", e.name, err)
+			continue
+		}
+		hdr.Name = e.name
+		hdr.Method = method
+		if e.info.IsDir() {
+			hdr.Method = zip.Store
+			if !strings.HasSuffix(hdr.Name, "/") {
+				hdr.Name += "/"
+			}
+			if _, err := zw.CreateHeader(hdr); err != nil {
+				fmt.Fprintf(os.Stderr, "zip: %s: %v\n", e.name, err)
+			}
+			continue
+		}
+		w, err := zw.CreateHeader(hdr)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "zip: %s: %v\n", e.name, err)
+			continue
+		}
+		src, err := os.Open(filepath.FromSlash(e.name))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "zip: %s: %v\n", e.name, err)
+			continue
+		}
+		n, err := io.Copy(w, src)
+		src.Close()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "zip: %s: %v\n", e.name, err)
+			continue
+		}
+		if !quiet {
+			fmt.Printf("  adding: %s (%d bytes)\n", e.name, n)
+		}
+	}
+
+	if err := zw.Close(); err != nil {
+		return fail("zip: %v", err)
+	}
+	return 0
+}
+
+func zipDelete(archive string, names []string, quiet bool) int {
+	r, err := zip.OpenReader(archive)
+	if err != nil {
+		return fail("zip: %s: %v", archive, err)
+	}
+	type kept struct {
+		hdr  *zip.FileHeader
+		data []byte
+	}
+	var keep []kept
+	toDelete := map[string]bool{}
+	for _, n := range names {
+		toDelete[filepath.ToSlash(n)] = true
+	}
+	for _, zf := range r.File {
+		if toDelete[zf.Name] {
+			if !quiet {
+				fmt.Printf("deleting: %s\n", zf.Name)
+			}
+			continue
+		}
+		rc, err := zf.Open()
+		if err != nil {
+			r.Close()
+			return fail("zip: %s: %v", archive, err)
+		}
+		data, _ := io.ReadAll(rc)
+		rc.Close()
+		hdr := zf.FileHeader
+		keep = append(keep, kept{&hdr, data})
+	}
+	r.Close()
+
+	out, err := os.Create(archive)
+	if err != nil {
+		return fail("zip: %v", err)
+	}
+	defer out.Close()
+	zw := zip.NewWriter(out)
+	for _, k := range keep {
+		w, err := zw.CreateHeader(k.hdr)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "zip: %v\n", err)
+			continue
+		}
+		w.Write(k.data)
+	}
+	if err := zw.Close(); err != nil {
+		return fail("zip: %v", err)
+	}
+	return 0
+}
+
+func zipList(archive string, quiet bool) int {
+	r, err := zip.OpenReader(archive)
+	if err != nil {
+		return fail("zip: %s: %v", archive, err)
+	}
+	defer r.Close()
+	if !quiet {
+		fmt.Printf("Archive:  %s\n", archive)
+		fmt.Printf("  Length      Date    Time    Name\n")
+		fmt.Printf("---------  ---------- -----   ----\n")
+	}
+	var total uint64
+	for _, zf := range r.File {
+		total += zf.UncompressedSize64
+		fmt.Printf("%9d  %10s %5s   %s\n",
+			zf.UncompressedSize64,
+			zf.Modified.Format("2006-01-02"),
+			zf.Modified.Format("15:04"),
+			zf.Name)
+	}
+	if !quiet {
+		fmt.Printf("---------                     -------\n")
+		fmt.Printf("%9d                     %d files\n", total, len(r.File))
+	}
+	return 0
+}
+
+func appletUnzip(args []string) int {
+	listOnly := false
+	var archive, destDir string
+	var patterns []string
+	i := 0
+	for i < len(args) {
+		a := args[i]
+		switch {
+		case a == "-h" || a == "--help":
+			fmt.Fprintln(os.Stderr, `Usage: unzip [-l] [-d dir] archive.zip [patterns...]
+
+Options:
+  -l         List contents only
+  -d DIR     Extract into DIR
+  -h, --help Show this help`)
+			return 0
+		case a == "-l":
+			listOnly, i = true, i+1
+		case a == "-d":
+			if i+1 >= len(args) {
+				return fail("unzip: -d requires a directory")
+			}
+			destDir, i = args[i+1], i+2
+		case strings.HasPrefix(a, "-") && len(a) > 1:
+			return fail("unzip: invalid option: %s", a)
+		default:
+			if archive == "" {
+				archive, i = a, i+1
+			} else {
+				patterns, i = append(patterns, a), i+1
+			}
+		}
+	}
+	if archive == "" {
+		return fail("unzip: usage: unzip [-l] [-d dir] archive.zip [patterns...]")
+	}
+	r, err := zip.OpenReader(archive)
+	if err != nil {
+		return fail("unzip: %s: %v", archive, err)
+	}
+	defer r.Close()
+
+	match := func(name string) bool {
+		if len(patterns) == 0 {
+			return true
+		}
+		for _, p := range patterns {
+			if ok, _ := filepath.Match(p, name); ok {
+				return true
+			}
+		}
+		return false
+	}
+
+	if listOnly {
+		fmt.Printf("Archive:  %s\n", archive)
+		fmt.Printf("  Length      Date    Time    Name\n")
+		fmt.Printf("---------  ---------- -----   ----\n")
+		var total uint64
+		for _, zf := range r.File {
+			if !match(zf.Name) {
+				continue
+			}
+			total += zf.UncompressedSize64
+			fmt.Printf("%9d  %10s %5s   %s\n",
+				zf.UncompressedSize64,
+				zf.Modified.Format("2006-01-02"),
+				zf.Modified.Format("15:04"),
+				zf.Name)
+		}
+		fmt.Printf("---------                     -------\n")
+		fmt.Printf("%9d                     %d files\n", total, len(r.File))
+		return 0
+	}
+
+	if destDir != "" {
+		if err := os.MkdirAll(destDir, 0o755); err != nil {
+			return fail("unzip: %v", err)
+		}
+	}
+
+	rc := 0
+	for _, zf := range r.File {
+		if !match(zf.Name) {
+			continue
+		}
+		clean := filepath.Clean(filepath.FromSlash(zf.Name))
+		if strings.HasPrefix(clean, "..") || filepath.IsAbs(clean) {
+			fmt.Fprintf(os.Stderr, "unzip: skipping unsafe path: %s\n", zf.Name)
+			rc = 1
+			continue
+		}
+		target := clean
+		if destDir != "" {
+			target = filepath.Join(destDir, clean)
+		}
+		if zf.FileInfo().IsDir() {
+			if err := os.MkdirAll(target, zf.Mode()); err != nil {
+				fmt.Fprintf(os.Stderr, "unzip: %s: %v\n", target, err)
+				rc = 1
+			}
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			fmt.Fprintf(os.Stderr, "unzip: %s: %v\n", target, err)
+			rc = 1
+			continue
+		}
+		out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, zf.Mode())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "unzip: %s: %v\n", target, err)
+			rc = 1
+			continue
+		}
+		src, err := zf.Open()
+		if err != nil {
+			out.Close()
+			fmt.Fprintf(os.Stderr, "unzip: %s: %v\n", zf.Name, err)
+			rc = 1
+			continue
+		}
+		_, err = io.Copy(out, src)
+		src.Close()
+		out.Close()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "unzip: %s: %v\n", target, err)
+			rc = 1
+			continue
+		}
+		fmt.Printf("  extracting: %s\n", target)
+	}
+	return rc
+}
+
+// ===========================================================================
+// Applet: stat / chmod / chown / ln / readlink / split / hexedit
+// ===========================================================================
+
 func appletStat(args []string) int {
 	if len(args) == 0 {
 		return fail("stat: usage: stat files...")
@@ -1047,7 +1480,7 @@ func appletSplit(args []string) int {
 			}
 			lineCount = 0
 		}
-		fmt.Fprintln(out, sc.Text())
+		fmt.Fprintln(out, strings.TrimSuffix(sc.Text(), "\r"))
 		lineCount++
 	}
 	if out != nil {
@@ -1162,7 +1595,7 @@ func appletHead(args []string) int {
 		sc.Buffer(make([]byte, 1024*1024), 1024*1024)
 		c := 0
 		for sc.Scan() && c < n {
-			fmt.Println(sc.Text())
+			fmt.Println(strings.TrimSuffix(sc.Text(), "\r"))
 			c++
 		}
 		f.Close()
@@ -1204,7 +1637,7 @@ func appletTail(args []string) int {
 		sc.Buffer(make([]byte, 1024*1024), 1024*1024)
 		var lines []string
 		for sc.Scan() {
-			lines = append(lines, sc.Text())
+			lines = append(lines, strings.TrimSuffix(sc.Text(), "\r"))
 		}
 		f.Close()
 		start := len(lines) - n
@@ -1319,7 +1752,7 @@ func appletGrep(args []string) int {
 		lineNo := 0
 		for sc.Scan() {
 			lineNo++
-			line := sc.Text()
+			line := strings.TrimSuffix(sc.Text(), "\r")
 			hay := line
 			if ignoreCase {
 				hay = strings.ToLower(hay)
@@ -1360,7 +1793,7 @@ func appletSort(args []string) int {
 		sc := bufio.NewScanner(f)
 		sc.Buffer(make([]byte, 1024*1024), 1024*1024)
 		for sc.Scan() {
-			lines = append(lines, sc.Text())
+			lines = append(lines, strings.TrimSuffix(sc.Text(), "\r"))
 		}
 		f.Close()
 	}
@@ -1392,7 +1825,7 @@ func appletUniq(args []string) int {
 		var prev string
 		first := true
 		for sc.Scan() {
-			line := sc.Text()
+			line := strings.TrimSuffix(sc.Text(), "\r")
 			if first || line != prev {
 				fmt.Println(line)
 			}
@@ -1505,7 +1938,8 @@ func appletCut(args []string) int {
 		sc := bufio.NewScanner(f)
 		sc.Buffer(make([]byte, 1024*1024), 1024*1024)
 		for sc.Scan() {
-			parts := strings.Split(sc.Text(), delim)
+			line := strings.TrimSuffix(sc.Text(), "\r")
+			parts := strings.Split(line, delim)
 			var out []string
 			for _, n := range fields {
 				if n-1 < len(parts) {
@@ -1616,7 +2050,7 @@ func appletSed(args []string) int {
 		lineNo := 0
 		for sc.Scan() {
 			lineNo++
-			line := sc.Text()
+			line := strings.TrimSuffix(sc.Text(), "\r")
 			del := false
 			printed := false
 			for _, c := range prog {
@@ -1726,8 +2160,7 @@ func parseSedCmd(s string) (sedCmd, error) {
 		}
 		re, err := regexp.Compile(parts[0])
 		if err != nil {
-			return c, err
-		}
+			return c, err		}
 		c.re = re
 		c.repl = parts[1]
 		if len(parts) >= 3 && strings.Contains(parts[2], "g") {
@@ -1782,7 +2215,7 @@ func appletAwk(args []string) int {
 		sc.Buffer(make([]byte, 1024*1024), 1024*1024)
 		for sc.Scan() {
 			lineNo++
-			line := sc.Text()
+			line := strings.TrimSuffix(sc.Text(), "\r")
 			var fields []string
 			if fs == " " || fs == "" {
 				fields = strings.Fields(line)
@@ -2082,6 +2515,150 @@ func appletStrings(args []string) int {
 			}
 		}
 		flush()
+	}
+	return rc
+}
+
+// ===========================================================================
+// Applet: nl
+// ===========================================================================
+
+func appletNl(args []string) int {
+	// Defaults (POSIX nl).
+	bodyStyle := "t" // -b: a=all, t=non-empty (default), n=none
+	increment := 1   // -i
+	separator := "\t" // -s
+	startNum := 1    // -v
+	width := 6       // -w
+	format := "rn"   // -n: ln=left, rn=right, rz=right zero-padded
+	noRenumber := false // -p (do not reset numbering on logical page breaks)
+
+	var files []string
+	i := 0
+	for i < len(args) {
+		a := args[i]
+		switch {
+		case a == "-h" || a == "--help":
+			fmt.Fprintln(os.Stderr, `Usage: nl [-b STYLE] [-i N] [-s SEP] [-v N] [-w N] [-n FORMAT] [files...]
+
+Number lines of files.
+
+Options:
+  -b STYLE   Which lines to number: a (all), t (non-empty, default), n (none)
+  -i N       Line number increment (default: 1)
+  -s SEP     Separator between number and line (default: TAB)
+  -v N       Starting line number (default: 1)
+  -w N       Width of the line number (default: 6)
+  -n FORMAT  Number format: ln (left), rn (right, default), rz (right zero-padded)
+  -h, --help Show this help`)
+			return 0
+		case a == "-b":
+			if i+1 >= len(args) {
+				return fail("nl: -b requires an argument")
+			}
+			bodyStyle, i = args[i+1], i+2
+		case a == "-i":
+			if i+1 >= len(args) {
+				return fail("nl: -i requires an argument")
+			}
+			n, err := strconv.Atoi(args[i+1])
+			if err != nil || n < 1 {
+				return fail("nl: invalid increment: %s", args[i+1])
+			}
+			increment, i = n, i+2
+		case a == "-s":
+			if i+1 >= len(args) {
+				return fail("nl: -s requires an argument")
+			}
+			separator, i = args[i+1], i+2
+		case a == "-v":
+			if i+1 >= len(args) {
+				return fail("nl: -v requires an argument")
+			}
+			n, err := strconv.Atoi(args[i+1])
+			if err != nil {
+				return fail("nl: invalid start: %s", args[i+1])
+			}
+			startNum, i = n, i+2
+		case a == "-w":
+			if i+1 >= len(args) {
+				return fail("nl: -w requires an argument")
+			}
+			n, err := strconv.Atoi(args[i+1])
+			if err != nil || n < 1 {
+				return fail("nl: invalid width: %s", args[i+1])
+			}
+			width, i = n, i+2
+		case a == "-n":
+			if i+1 >= len(args) {
+				return fail("nl: -n requires an argument")
+			}
+			format, i = args[i+1], i+2
+			switch format {
+			case "ln", "rn", "rz":
+			default:
+				return fail("nl: invalid format: %s (use ln, rn or rz)", format)
+			}
+		case a == "-p":
+			noRenumber, i = true, i+1
+		case strings.HasPrefix(a, "-"):
+			return fail("nl: invalid option: %s", a)
+		default:
+			files = append(files, a)
+			i++
+		}
+	}
+	_ = noRenumber // unused for now; logical page breaks not implemented
+
+	switch bodyStyle {
+	case "a", "t", "n":
+	default:
+		return fail("nl: invalid body style: %s (use a, t or n)", bodyStyle)
+	}
+
+	if len(files) == 0 {
+		files = []string{"-"}
+	}
+
+	rc := 0
+	num := startNum
+	for _, name := range files {
+		f, err := openInput(name)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "nl: %s: %v\n", name, err)
+			rc = 1
+			continue
+		}
+		sc := bufio.NewScanner(f)
+		sc.Buffer(make([]byte, 1024*1024), 1024*1024)
+		for sc.Scan() {
+			line := strings.TrimSuffix(sc.Text(), "\r")
+			shouldNumber := false
+			switch bodyStyle {
+			case "a":
+				shouldNumber = true
+			case "t":
+				shouldNumber = line != ""
+			case "n":
+				shouldNumber = false
+			}
+			if shouldNumber {
+				var numStr string
+				switch format {
+				case "ln":
+					numStr = fmt.Sprintf("%-*d", width, num)
+				case "rn":
+					numStr = fmt.Sprintf("%*d", width, num)
+				case "rz":
+					numStr = fmt.Sprintf("%0*d", width, num)
+				}
+				fmt.Println(numStr + separator + line)
+				num += increment
+			} else {
+				fmt.Println(strings.Repeat(" ", width) + separator + line)
+			}
+		}
+		f.Close()
 	}
 	return rc
 }
@@ -2674,7 +3251,7 @@ Examples:
 		sc := bufio.NewScanner(f)
 		sc.Buffer(make([]byte, 1024*1024), 1024*1024)
 		for sc.Scan() {
-			line := strings.TrimSpace(sc.Text())
+			line := strings.TrimSpace(strings.TrimSuffix(sc.Text(), "\r"))
 			if line == "" || strings.HasPrefix(line, "#") {
 				continue
 			}
@@ -3595,7 +4172,7 @@ func appletXargs(args []string) int {
 	sc := bufio.NewScanner(os.Stdin)
 	sc.Buffer(make([]byte, 1024*1024), 1024*1024)
 	for sc.Scan() {
-		for _, f := range strings.Fields(sc.Text()) {
+		for _, f := range strings.Fields(strings.TrimSuffix(sc.Text(), "\r")) {
 			input = append(input, f)
 		}
 	}
@@ -3613,26 +4190,66 @@ func appletXargs(args []string) int {
 }
 
 // ===========================================================================
-// sh — shell with pipes, redirections and logical operators
+// sh — shell with pipes, redirections, variable expansion and logical ops
 // ===========================================================================
 
+// lastExit holds the exit status of the most recent command, for $?.
+var lastExit int
+
 func appletSh(args []string) int {
+	// sh -c 'command'
+	if len(args) >= 2 && args[0] == "-c" {
+		return runScript(args[1])
+	}
+
+	// sh script.sh [args...]
 	if len(args) > 0 {
+		path := args[0]
+		// Treat as a script file only if it exists and is a regular file.
+		if fi, err := os.Stat(path); err == nil && !fi.IsDir() {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return fail("sh: %s: %v", path, err)
+			}
+			sc := bufio.NewScanner(strings.NewReader(string(data)))
+			sc.Buffer(make([]byte, 1024*1024), 1024*1024)
+			rc := 0
+			for sc.Scan() {
+				line := strings.TrimSpace(strings.TrimSuffix(sc.Text(), "\r"))
+				if line == "" || strings.HasPrefix(line, "#") {
+					continue
+				}
+				if line == "exit" {
+					return rc
+				}
+				rc = runScript(line)
+				lastExit = rc
+			}
+			if err := sc.Err(); err != nil {
+				return fail("sh: %v", err)
+			}
+			return rc
+		}
+		// Not a file: treat as inline command.
 		return runScript(strings.Join(args, " "))
 	}
+
+	// stdin
 	sc := bufio.NewScanner(os.Stdin)
 	sc.Buffer(make([]byte, 1024*1024), 1024*1024)
+	rc := 0
 	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
+		line := strings.TrimSpace(strings.TrimSuffix(sc.Text(), "\r"))
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
 		if line == "exit" {
-			return 0
+			return rc
 		}
-		runScript(line)
+		rc = runScript(line)
+		lastExit = rc
 	}
-	return 0
+	return rc
 }
 
 func runScript(script string) int {
@@ -3656,6 +4273,7 @@ func runScript(script string) int {
 			continue
 		}
 		rc = runPipeline(tok)
+		lastExit = rc
 	}
 	return rc
 }
@@ -3784,25 +4402,71 @@ func runCommandWithRedir(cmdStr string, stdin io.Reader, stdout io.Writer) int {
 	if len(args) == 0 {
 		return 0
 	}
+
+	// Extract leading VAR=value assignments.
+	var env []string
+	for len(args) > 0 && isAssignment(args[0]) {
+		env = append(env, args[0])
+		args = args[1:]
+	}
+	if len(args) == 0 {
+		// Only assignments on the line: apply to the current process for
+		// simplicity (real sh would also apply in the current shell).
+		for _, e := range env {
+			kv := strings.SplitN(e, "=", 2)
+			os.Setenv(kv[0], kv[1])
+		}
+		return 0
+	}
+
 	name := args[0]
 	rest := args[1:]
+
+	// Handle exit status storage so $? works on the next line.
+	var rc int
+	defer func() { lastExit = rc }()
+
 	if fn, ok := applets[name]; ok {
-		if stdout == os.Stdout && stdin == os.Stdin {
-			return fn(rest)
+		if len(env) > 0 {
+			rc = runAppletWithEnv(fn, rest, stdin, stdout, env)
+		} else if stdout == os.Stdout && stdin == os.Stdin {
+			rc = fn(rest)
+		} else {
+			rc = runAppletWithIO(fn, rest, stdin, stdout)
 		}
-		return runAppletWithIO(fn, rest, stdin, stdout)
+		return rc
 	}
 	cmd := exec.Command(name, rest...)
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {
-			return ee.ExitCode()
+			rc = ee.ExitCode()
+			return rc
 		}
 		fmt.Fprintf(os.Stderr, "sh: %s: %v\n", name, err)
-		return 127
+		rc = 127
+		return rc
 	}
+	rc = 0
 	return 0
+}
+
+func isAssignment(s string) bool {
+	eq := strings.IndexByte(s, '=')
+	if eq <= 0 {
+		return false
+	}
+	name := s[:eq]
+	for i, c := range name {
+		if !(c == '_' || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (i > 0 && c >= '0' && c <= '9')) {
+			return false
+		}
+	}
+	return true
 }
 
 func runAppletWithIO(fn appletFunc, args []string, stdin io.Reader, stdout io.Writer) int {
@@ -3829,43 +4493,159 @@ func runAppletWithIO(fn appletFunc, args []string, stdin io.Reader, stdout io.Wr
 	return rc
 }
 
+func runAppletWithEnv(fn appletFunc, args []string, stdin io.Reader, stdout io.Writer, env []string) int {
+	oldEnv := os.Environ()
+	m := map[string]string{}
+	for _, e := range oldEnv {
+		if k := strings.SplitN(e, "=", 2)[0]; k != "" {
+			m[k] = e
+		}
+	}
+	for _, e := range env {
+		kv := strings.SplitN(e, "=", 2)
+		m[kv[0]] = e
+	}
+	os.Clearenv()
+	for _, e := range m {
+		kv := strings.SplitN(e, "=", 2)
+		os.Setenv(kv[0], kv[1])
+	}
+	rc := runAppletWithIO(fn, args, stdin, stdout)
+	os.Clearenv()
+	for _, e := range oldEnv {
+		kv := strings.SplitN(e, "=", 2)
+		os.Setenv(kv[0], kv[1])
+	}
+	return rc
+}
+
+// parseRedirs tokenizes a command line, performs variable expansion on
+// unquoted/double-quoted segments, and extracts redirections.
+//
+// Expansion rules (matching POSIX shell basics):
+//   - Single quotes: no expansion.
+//   - Double quotes: $-expansion happens; backslash escapes \" and \\ and \$.
+//   - Unquoted: $-expansion happens; backslash escapes the next char.
+//   - $NAME and ${NAME} expand from the environment.
+//   - $? is the last exit code; $$ is the PID of this process.
+//   - $((...)) is not supported; numeric arithmetic must use expr.
 func parseRedirs(s string) (args []string, inFile, outFile string, appendMode bool, err error) {
 	var cur strings.Builder
 	inSingle, inDouble := false, false
+	hasToken := false
 	flush := func() {
-		if cur.Len() > 0 {
+		if hasToken {
 			args = append(args, cur.String())
 			cur.Reset()
+			hasToken = false
 		}
 	}
+
+	// expandAt expands a $... reference starting at s[i] (s[i] == '$').
+	// Returns the replacement string and the new index after the reference.
+	expandAt := func(i int) (string, int) {
+		if i+1 >= len(s) {
+			return "$", i + 1
+		}
+		c := s[i+1]
+		switch {
+		case c == '?':
+			return strconv.Itoa(lastExit), i + 2
+		case c == '$':
+			return strconv.Itoa(os.Getpid()), i + 2
+		case c == '{':
+			end := strings.IndexByte(s[i+2:], '}')
+			if end < 0 {
+				return "$", i + 1
+			}
+			name := s[i+2 : i+2+end]
+			return os.Getenv(name), i + 3 + end
+		case c == '_' || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'):
+			j := i + 1
+			for j < len(s) {
+				d := s[j]
+				if d == '_' || (d >= '0' && d <= '9') ||
+					(d >= 'A' && d <= 'Z') || (d >= 'a' && d <= 'z') {
+					j++
+					continue
+				}
+				break
+			}
+			return os.Getenv(s[i+1 : j]), j
+		}
+		return "$", i + 1
+	}
+
 	i := 0
 	for i < len(s) {
 		c := s[i]
-		switch c {
-		case '\'':
-			if !inDouble {
-				inSingle = !inSingle
+
+		// Backslash handling.
+		if c == '\\' && !inSingle && i+1 < len(s) {
+			next := s[i+1]
+			if inDouble {
+				// In double quotes, only \" \\ \$ \` \newline are escapes.
+				switch next {
+				case '"', '\\', '$', '`':
+					cur.WriteByte(next)
+					i += 2
+					continue
+				default:
+					cur.WriteByte('\\')
+					i++
+					continue
+				}
 			}
-			cur.WriteByte(c)
-			i++
+			cur.WriteByte(next)
+			hasToken = true
+			i += 2
 			continue
-		case '"':
-			if !inSingle {
-				inDouble = !inDouble
+		}
+
+		if c == '\'' {
+			if inDouble {
+				cur.WriteByte(c) // literal inside double quotes
+			} else {
+				inSingle = !inSingle
+				hasToken = true
 			}
-			cur.WriteByte(c)
 			i++
 			continue
 		}
+		if c == '"' {
+			if inSingle {
+				cur.WriteByte(c)
+			} else {
+				inDouble = !inDouble
+				hasToken = true
+			}
+			i++
+			continue
+		}
+
+		// Variable expansion (only when not in single quotes).
+		if c == '$' && !inSingle {
+			repl, ni := expandAt(i)
+			cur.WriteString(repl)
+			hasToken = true
+			i = ni
+			continue
+		}
+
 		if !inSingle && !inDouble {
+			if c == ' ' || c == '\t' {
+				flush()
+				i++
+				continue
+			}
 			if strings.HasPrefix(s[i:], ">>") {
 				flush()
 				i += 2
-				for i < len(s) && s[i] == ' ' {
+				for i < len(s) && (s[i] == ' ' || s[i] == '\t') {
 					i++
 				}
 				start := i
-				for i < len(s) && s[i] != ' ' {
+				for i < len(s) && s[i] != ' ' && s[i] != '\t' {
 					i++
 				}
 				outFile, appendMode = s[start:i], true
@@ -3874,11 +4654,11 @@ func parseRedirs(s string) (args []string, inFile, outFile string, appendMode bo
 			if c == '>' {
 				flush()
 				i++
-				for i < len(s) && s[i] == ' ' {
+				for i < len(s) && (s[i] == ' ' || s[i] == '\t') {
 					i++
 				}
 				start := i
-				for i < len(s) && s[i] != ' ' {
+				for i < len(s) && s[i] != ' ' && s[i] != '\t' {
 					i++
 				}
 				outFile = s[start:i]
@@ -3887,18 +4667,20 @@ func parseRedirs(s string) (args []string, inFile, outFile string, appendMode bo
 			if c == '<' {
 				flush()
 				i++
-				for i < len(s) && s[i] == ' ' {
+				for i < len(s) && (s[i] == ' ' || s[i] == '\t') {
 					i++
 				}
 				start := i
-				for i < len(s) && s[i] != ' ' {
+				for i < len(s) && s[i] != ' ' && s[i] != '\t' {
 					i++
 				}
 				inFile = s[start:i]
 				continue
 			}
 		}
+
 		cur.WriteByte(c)
+		hasToken = true
 		i++
 	}
 	flush()

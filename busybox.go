@@ -154,8 +154,40 @@ func listApplets() {
 		names = append(names, n)
 	}
 	sort.Strings(names)
+
+	const cols = 4
+	if len(names) == 0 {
+		return
+	}
+
+	// Maximum name width + 2 spaces of separation
+	maxWidth := 0
 	for _, n := range names {
-		fmt.Println(n)
+		if len(n) > maxWidth {
+			maxWidth = len(n)
+		}
+	}
+	colWidth := maxWidth + 2
+
+	// Number of rows needed to fit all names in `cols` columns
+	rows := (len(names) + cols - 1) / cols
+
+	// Column-major fill (vertical), like BusyBox ls
+	for r := 0; r < rows; r++ {
+		for c := 0; c < cols; c++ {
+			idx := c*rows + r
+			if idx >= len(names) {
+				continue
+			}
+			name := names[idx]
+			if c < cols-1 && idx+rows < len(names) {
+				// Last column does not need padding
+				fmt.Printf("%-*s", colWidth, name)
+			} else {
+				fmt.Print(name)
+			}
+		}
+		fmt.Println()
 	}
 }
 
@@ -2346,23 +2378,74 @@ func appletDiff(args []string) int {
 		return fail("diff: %v", err)
 	}
 	diffs := diffLines(a, b)
-	if len(diffs) == 0 {
-		return 0
-	}
-	fmt.Printf("--- %s\n+++ %s\n", args[0], args[1])
+	// Check if there is any difference at all
+	hasDiff := false
 	for _, d := range diffs {
-		switch d.op {
-		case '-':
-			fmt.Printf("- %s\n", d.line)
-		case '+':
-			fmt.Printf("+ %s\n", d.line)
+		if d.op != ' ' {
+			hasDiff = true
+			break
 		}
 	}
+	if !hasDiff {
+		return 0
+	}
+
+	var out strings.Builder
+	fmt.Fprintf(&out, "--- %s\n+++ %s\n", args[0], args[1])
+
+	origPos, newPos := 1, 1
+	i := 0
+	for i < len(diffs) {
+		if diffs[i].op == ' ' {
+			origPos++
+			newPos++
+			i++
+			continue
+		}
+		// Start of a difference block
+		startOrig := origPos
+		startNew := newPos
+		var removed, added []string
+		for i < len(diffs) && diffs[i].op != ' ' {
+			switch diffs[i].op {
+			case '-':
+				removed = append(removed, diffs[i].line)
+				origPos++
+			case '+':
+				added = append(added, diffs[i].line)
+				newPos++
+			}
+			i++
+		}
+		// Emit the command
+		switch {
+		case len(removed) > 0 && len(added) > 0:
+			fmt.Fprintf(&out, "%dc%d\n", startOrig, startNew)
+			for _, l := range removed {
+				fmt.Fprintf(&out, "< %s\n", l)
+			}
+			fmt.Fprintf(&out, "---\n")
+			for _, l := range added {
+				fmt.Fprintf(&out, "> %s\n", l)
+			}
+		case len(removed) > 0:
+			fmt.Fprintf(&out, "%dd%d\n", startOrig, startNew-1)
+			for _, l := range removed {
+				fmt.Fprintf(&out, "< %s\n", l)
+			}
+		case len(added) > 0:
+			fmt.Fprintf(&out, "%da%d\n", startOrig-1, startNew)
+			for _, l := range added {
+				fmt.Fprintf(&out, "> %s\n", l)
+			}
+		}
+	}
+	fmt.Print(out.String())
 	return 1
 }
 
 type diffOp struct {
-	op   byte
+	op   byte   // ' ', '-', '+'
 	line string
 }
 
@@ -2410,13 +2493,34 @@ func diffLines(a, b []string) []diffOp {
 	for k := len(rev) - 1; k >= 0; k-- {
 		out = append(out, rev[k])
 	}
-	var filtered []diffOp
-	for _, d := range out {
-		if d.op != ' ' {
-			filtered = append(filtered, d)
-		}
+	return out // keep equal lines
+}
+
+type patchCmd struct {
+	op        byte // 'a', 'c', 'd'
+	origStart int  // 1-based
+	origEnd   int  // 1-based (for c/d)
+}
+
+func parsePatchCommand(s string) (patchCmd, bool) {
+	var cmd patchCmd
+	var a, b int
+	var op byte
+	n, err := fmt.Sscanf(s, "%d%c%d", &a, &op, &b)
+	if err != nil || n != 3 {
+		return cmd, false
 	}
-	return filtered
+	if op != 'a' && op != 'c' && op != 'd' {
+		return cmd, false
+	}
+	cmd.op = op
+	cmd.origStart = a
+	if op == 'a' {
+		cmd.origEnd = a
+	} else {
+		cmd.origEnd = b
+	}
+	return cmd, true
 }
 
 func appletPatch(args []string) int {
@@ -2446,32 +2550,65 @@ func appletPatch(args []string) int {
 	if err != nil {
 		return fail("patch: %v", err)
 	}
+
 	var result []string
-	origIdx := 0
-	for _, pl := range patchLines {
+	origIdx := 0 // 0-based index into orig
+
+	i = 0
+	for i < len(patchLines) {
+		pl := patchLines[i]
 		if strings.HasPrefix(pl, "---") || strings.HasPrefix(pl, "+++") {
+			i++
 			continue
 		}
-		if strings.HasPrefix(pl, "- ") {
-			removed := pl[2:]
-			for origIdx < len(orig) && orig[origIdx] != removed {
-				result = append(result, orig[origIdx])
-				origIdx++
-			}
-			if origIdx < len(orig) {
-				origIdx++
-			}
+		cmd, ok := parsePatchCommand(pl)
+		if !ok {
+			i++
 			continue
 		}
-		if strings.HasPrefix(pl, "+ ") {
-			result = append(result, pl[2:])
-			continue
+		// Copy lines up to the indicated position
+		for origIdx < cmd.origStart-1 {
+			result = append(result, orig[origIdx])
+			origIdx++
+		}
+		i++
+		// Read removal (<) and addition (>) lines
+		var removed, added []string
+		for i < len(patchLines) && strings.HasPrefix(patchLines[i], "< ") {
+			removed = append(removed, patchLines[i][2:])
+			i++
+		}
+		if i < len(patchLines) && patchLines[i] == "---" {
+			i++
+		}
+		for i < len(patchLines) && strings.HasPrefix(patchLines[i], "> ") {
+			added = append(added, patchLines[i][2:])
+			i++
+		}
+		// Apply the operation
+		switch cmd.op {
+		case 'a':
+			// Add after origStart
+			result = append(result, orig[origIdx:cmd.origStart]...)
+			origIdx = cmd.origStart
+			result = append(result, added...)
+		case 'd':
+			// Remove origStart..origEnd
+			result = append(result, orig[origIdx:cmd.origStart-1]...)
+			origIdx = cmd.origEnd
+		case 'c':
+			// Replace origStart..origEnd with added
+			result = append(result, orig[origIdx:cmd.origStart-1]...)
+			origIdx = cmd.origEnd
+			result = append(result, added...)
 		}
 	}
+	// Copy the remainder
 	for origIdx < len(orig) {
 		result = append(result, orig[origIdx])
 		origIdx++
 	}
+
 	if outFile == "" {
 		outFile = target
 	}
